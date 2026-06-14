@@ -1,0 +1,88 @@
+{% extends "layout.html" %}
+
+{% block title %}Simply Trading - Stock Screener{% endblock %}
+{% block content %}
+<section class="screener-panel">
+    <form class="screener-toolbar" method="get" action="{{ url_for('screener') }}">
+        <strong>Stock Screener</strong>
+        <div class="filter-control filter-control-search">
+            <label for="search">Search</label>
+            <input
+                id="search"
+                name="search"
+                type="search"
+                value="{{ search_term }}"
+                placeholder="Ticker or company"
+                autocomplete="off"
+            >
+        </div>
+
+        <div class="filter-control">
+            <label for="sector">Sector</label>
+            <select id="sector" name="sector">
+                <option value="">All sectors</option>
+                {% for value in sectors %}
+                    <option value="{{ value }}" {% if selected_sector == value %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="toolbar-actions">
+            <button type="submit" class="button button-primary">Apply</button>
+            <a class="button button-secondary" href="{{ url_for('screener') }}">Clear</a>
+        </div>
+    </form>
+
+    <div class="table-heading">
+        <div>
+            <h2>Overview</h2>
+            <span>{{ stocks|length }} result{% if stocks|length != 1 %}s{% endif %}</span>
+        </div>
+        <span class="data-note">NSE prices in INR</span>
+    </div>
+
+    <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Ticker</th>
+                    <th scope="col">Company</th>
+                    <th scope="col">Sector</th>
+                    <th scope="col">Industry</th>
+                    <th scope="col" class="number-cell">Price</th>
+                    <th scope="col" class="number-cell">Change</th>
+                    <th scope="col" class="number-cell">Change %</th>
+                    <th scope="col" class="number-cell">Volume</th>
+                    <th scope="col" class="number-cell">Market Cap</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stock in stocks %}
+                    <tr>
+                        <td><strong class="ticker">{{ stock.display_symbol }}</strong></td>
+                        <td class="company-name">{{ stock.name }}</td>
+                        <td>{{ stock.sector }}</td>
+                        <td class="muted-cell">{{ stock.industry }}</td>
+                        <td class="number-cell">{{ "%.2f"|format(stock.price) if stock.price is not none else "-" }}</td>
+                        <td class="number-cell {% if stock.change is not none and stock.change > 0 %}positive{% elif stock.change is not none and stock.change < 0 %}negative{% endif %}">
+                            {{ "%+.2f"|format(stock.change) if stock.change is not none else "-" }}
+                        </td>
+                        <td class="number-cell {% if stock.percent is not none and stock.percent > 0 %}positive{% elif stock.percent is not none and stock.percent < 0 %}negative{% endif %}">
+                            {{ "%+.2f%%"|format(stock.percent) if stock.percent is not none else "-" }}
+                        </td>
+                        <td class="number-cell">{{ format_volume(stock.volume) }}</td>
+                        <td class="number-cell">{{ format_market_cap(stock.market_cap) }}</td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td class="empty-state" colspan="9">
+                            <strong>No stocks found</strong>
+                            <span>Adjust the search or sector filter and try again.</span>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

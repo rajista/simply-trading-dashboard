@@ -1,0 +1,186 @@
+{% extends "layout.html" %}
+
+{% block title %}Simply Trading - Indian Market Dashboard{% endblock %}
+
+{% block announcement %}
+<div class="announcement">India Market Dashboard: NSE indices, breadth, movers and sector performance</div>
+{% endblock %}
+
+{% block content %}
+<section class="market-brief panel">
+    <span class="brief-time">Today</span>
+    <strong>{{ market_brief }}</strong>
+    {% if market_stale %}<span class="stale-label">cached market data</span>{% endif %}
+</section>
+
+<section class="index-grid">
+    {% for index in market.indices %}
+    <article class="index-card panel">
+        <header>
+            <strong>{{ index.name }}</strong>
+            {% if index.available %}
+                <span>{{ index.date }}</span>
+                <b class="{{ 'positive' if index.change >= 0 else 'negative' }}">{{ "%+.2f (%+.2f%%)"|format(index.change, index.percent) }}</b>
+            {% endif %}
+        </header>
+        {% if index.available and index.candles %}
+        <svg class="candle-chart" viewBox="0 0 300 120" role="img" aria-label="{{ index.name }} candlestick chart" preserveAspectRatio="none">
+            <g class="chart-grid">
+                <line x1="8" y1="30" x2="292" y2="30"/><line x1="8" y1="60" x2="292" y2="60"/><line x1="8" y1="90" x2="292" y2="90"/>
+            </g>
+            {% for candle in index.candles %}
+            <g class="{{ 'candle-up' if candle.up else 'candle-down' }}">
+                <line x1="{{ candle.x }}" y1="{{ candle.high_y }}" x2="{{ candle.x }}" y2="{{ candle.low_y }}"/>
+                <rect x="{{ candle.x - candle.body_width / 2 }}" y="{{ candle.body_y }}" width="{{ candle.body_width }}" height="{{ candle.body_height }}"/>
+            </g>
+            {% endfor %}
+        </svg>
+        <footer><span>10AM</span><span>12PM</span><span>2PM</span><span>4PM</span></footer>
+        {% else %}
+        <div class="unavailable">Index history unavailable</div>
+        {% endif %}
+    </article>
+    {% endfor %}
+</section>
+
+<section class="breadth-grid">
+    {% for metric in market.breadth %}
+    <article class="breadth-card panel">
+        <div><span class="positive">{{ metric.left_label }}</span><small>{{ metric.label }}</small><span class="negative">{{ metric.right_label }}</span></div>
+        <div><b class="positive">{{ "%.1f%% (%d)"|format(metric.left_percent, metric.left_count) }}</b><b class="negative">({{ metric.right_count }}) {{ "%.1f%%"|format(metric.right_percent) }}</b></div>
+        <div class="breadth-track{% if metric.left_count + metric.right_count == 0 %} breadth-empty{% endif %}"><i style="width: {{ metric.left_percent }}%"></i></div>
+    </article>
+    {% endfor %}
+</section>
+
+<section class="dashboard-grid">
+    <div class="market-tables panel">
+        <div class="mover-column">
+            <h2>Top Gainers</h2>
+            <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
+            <tbody>{% for row in market.gainers %}<tr><td class="link">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="positive">{{ "%+.2f%%"|format(row.percent) }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
+        </div>
+        <div class="mover-column">
+            <h2>Top Losers</h2>
+            <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
+            <tbody>{% for row in market.losers %}<tr><td class="link">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="negative">{{ "%+.2f%%"|format(row.percent) }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
+        </div>
+        <div class="mover-column">
+            <h2>Most Active</h2>
+            <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
+            <tbody>{% for row in market.active %}<tr><td class="link">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="{{ 'positive' if row.percent and row.percent > 0 else 'negative' if row.percent and row.percent < 0 }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
+        </div>
+    </div>
+
+    <article class="heatmap panel">
+        <h2>NIFTY 50 Stocks - 1 Day Performance {% if constituents_stale %}<small>cached list</small>{% endif %}</h2>
+        <div class="heatmap-groups">
+        {% for group in market.heatmap %}
+            <section class="heatmap-sector">
+                <h3>{{ group.sector }}</h3>
+                <div class="heatmap-cells">
+                {% for cell in group.cells %}
+                    <div class="heat-cell {{ 'heat-positive' if (cell.percent or 0) >= 0 else 'heat-negative' }}" style="flex-grow: {{ cell.weight }}; --intensity: {{ cell.intensity }}">
+                        <strong>{{ cell.display_symbol }}</strong><span>{{ "%+.2f%%"|format(cell.percent) if cell.percent is not none else "-" }}</span>
+                    </div>
+                {% endfor %}
+                </div>
+            </section>
+        {% else %}<div class="unavailable">Heatmap data unavailable</div>{% endfor %}
+        </div>
+    </article>
+
+    <article class="signals panel">
+        <h2>Technical Signals</h2>
+        <div class="signal-columns">
+        {% for row in market.signals %}
+            <div><span class="link">{{ row.display_symbol }}</span><b>{{ row.signal }}</b><em class="{{ 'positive' if row.percent and row.percent > 0 else 'negative' if row.percent and row.percent < 0 }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</em></div>
+        {% endfor %}
+        </div>
+    </article>
+
+    <article class="sector-panel panel">
+        <h2>Sector Performance</h2>
+        <table class="sector-table">
+            <thead><tr><th>Sector</th><th>Stocks</th><th>Adv.</th><th>Avg Change</th><th>Volume</th><th>Leader</th><th>Laggard</th></tr></thead>
+            <tbody>{% for sector in market.sectors %}<tr>
+                <td class="link">{{ sector.name }}</td>
+                <td>{{ sector.stocks }}</td>
+                <td>{{ sector.advancers }}</td>
+                <td class="{{ 'positive' if sector.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(sector.percent) }}</td>
+                <td>{{ format_volume(sector.volume) }}</td>
+                <td class="positive">{{ sector.leader.display_symbol }} {{ "%+.1f%%"|format(sector.leader.percent) if sector.leader.percent is not none else "" }}</td>
+                <td class="negative">{{ sector.laggard.display_symbol }} {{ "%+.1f%%"|format(sector.laggard.percent) if sector.laggard.percent is not none else "" }}</td>
+            </tr>{% endfor %}</tbody>
+        </table>
+    </article>
+
+    <article class="headlines panel">
+        <h2>Headlines {% if news_stale %}<small>cached</small>{% endif %}</h2>
+        <ul>
+        {% for headline in headlines %}
+            <li><span>{{ headline.time or headline.source }}</span><a href="{{ headline.url }}" target="_blank" rel="noopener noreferrer">{{ headline.title }}</a><small>{{ headline.source }}</small></li>
+        {% else %}<li class="unavailable">Headlines temporarily unavailable</li>{% endfor %}
+        </ul>
+    </article>
+
+    <article class="index-summary panel">
+        <h2>Index Summary</h2>
+        <table><thead><tr><th>Index</th><th>Last</th><th>Change</th></tr></thead>
+        <tbody>{% for index in market.indices if index.available %}<tr><td class="link">{{ index.name }}</td><td>{{ "%.2f"|format(index.price) }}</td><td class="{{ 'positive' if index.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(index.percent) }}</td></tr>{% endfor %}</tbody></table>
+        <h2 class="recent-title">Recent Quotes</h2>
+        <div class="recent-quotes">{% for row in market.rows[:6] %}<span class="link">{{ row.display_symbol }} <b class="{{ 'positive' if row.percent and row.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</b></span>{% endfor %}</div>
+        <h2 class="recent-title">NIFTY 50 Internals</h2>
+        <div class="internal-grid">
+            <div><span>Above SMA50</span><strong>{{ market.internals.above_sma50 }}/50</strong></div>
+            <div><span>Above SMA200</span><strong>{{ market.internals.above_sma200 }}/50</strong></div>
+            <div><span>Near 52W High</span><strong>{{ market.internals.near_high }}</strong></div>
+            <div><span>Volume Surge</span><strong>{{ market.internals.volume_surge }}</strong></div>
+        </div>
+    </article>
+
+    <article class="events-panel panel">
+        <h2>Nearby Events {% if calendar_stale %}<small>cached</small>{% endif %}</h2>
+        <div class="event-list">
+        {% for event in nearby_events %}
+            <div class="event-row">
+                <time>{{ event.date_label }}</time>
+                <span class="event-type event-{{ event.type|lower }}">{{ event.type }}</span>
+                <div><strong>{{ event.title }}</strong><small>{{ event.time }} &middot; {{ event.detail }}</small></div>
+            </div>
+        {% else %}<div class="unavailable">No nearby events available</div>{% endfor %}
+        </div>
+    </article>
+
+    <article class="earnings-panel panel">
+        <h2>Upcoming Earnings Release</h2>
+        <div class="earnings-scroll"><table>
+            <thead><tr><th>Date</th><th>Ticker</th><th>Trend</th><th>Change</th><th>Vol Change</th><th>Volume</th></tr></thead>
+            <tbody>
+            {% for item in earnings %}
+                <tr>
+                    <td>{{ item.date_label }}</td>
+                    <td class="link" title="{{ item.name }}">{{ item.symbol }}</td>
+                    <td>{{ item.trend }}</td>
+                    <td class="{{ 'positive' if item.percent is not none and item.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(item.percent) if item.percent is not none else "-" }}</td>
+                    <td class="{{ 'positive' if item.volume_change is not none and item.volume_change >= 0 else 'negative' }}">{{ "%+.1f%%"|format(item.volume_change) if item.volume_change is not none else "-" }}</td>
+                    <td>{{ format_volume(item.volume) }}</td>
+                </tr>
+            {% else %}<tr><td colspan="6">No tracked earnings dates available</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </article>
+
+    <article class="market-stats panel">
+        <h2>Market Pulse</h2>
+        <div class="stats-grid">
+            <div><span>Stocks tracked</span><strong>{{ market.market_stats.tracked }}</strong></div>
+            <div><span>Quotes available</span><strong>{{ market.market_stats.priced }}</strong></div>
+            <div><span>Advance ratio</span><strong class="positive">{{ "%.1f%%"|format(market.market_stats.advance_ratio) }}</strong></div>
+            <div><span>Average move</span><strong class="{{ 'positive' if market.market_stats.average_change and market.market_stats.average_change >= 0 else 'negative' }}">{{ "%+.2f%%"|format(market.market_stats.average_change) if market.market_stats.average_change is not none else "-" }}</strong></div>
+            <div><span>Total volume</span><strong>{{ format_volume(market.market_stats.total_volume) }}</strong></div>
+            <div><span>Tracked market cap</span><strong>{{ format_market_cap(market.market_stats.total_market_cap) }}</strong></div>
+        </div>
+    </article>
+</section>
+{% endblock %}

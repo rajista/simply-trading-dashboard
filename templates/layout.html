@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#20242f">
+    <title>{% block title %}Simply Trading{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <div class="masthead">
+            <a class="wordmark" href="{{ url_for('dashboard') }}">
+                <span>Simply Trading</span><small>INDIAN<br>MARKETS</small>
+            </a>
+            {% if show_header_search %}
+                <form class="header-search" action="{{ url_for('screener') }}" method="get">
+                    <span aria-hidden="true">&#9906;</span>
+                    <input name="search" type="search" placeholder="Search ticker, company or profile" aria-label="Search stocks">
+                </form>
+            {% endif %}
+        </div>
+        <div class="nav-row">
+            <nav aria-label="Primary navigation">
+                <a class="{{ 'active' if active_page == 'home' }}" href="{{ url_for('dashboard') }}">Home</a>
+                <a class="{{ 'active' if active_page == 'screener' }}" href="{{ url_for('screener') }}">Screener</a>
+                <a href="https://trading-simplified.com/blog/" target="_blank" rel="noopener noreferrer">Articles</a>
+                <a href="https://trading-simplified.com/swp-calculator/" target="_blank" rel="noopener noreferrer">SWP Calculator</a>
+                <a href="https://retirement.trading-simplified.com/" target="_blank" rel="noopener noreferrer">Retirement Stress Test</a>
+                <a href="https://trading-simplified.com/option-chain-analysis/" target="_blank" rel="noopener noreferrer">Option Chain Analysis</a>
+                <a href="https://trading-simplified.com/market-performance/" target="_blank" rel="noopener noreferrer">Market Performance</a>
+            </nav>
+            <div class="nav-meta">
+                <time>{{ current_time }}</time>
+                <span class="market-state state-{{ market_status.class_name }}">{{ market_status.label }}</span>
+            </div>
+        </div>
+    </header>
+    {% block announcement %}{% endblock %}
+    <main class="{{ 'dashboard-main' if active_page == 'home' else 'screener-main' }}">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
