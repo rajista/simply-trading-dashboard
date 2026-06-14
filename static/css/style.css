@@ -266,8 +266,8 @@ tbody tr:hover { background: #2a303d; }
 .heatmap-groups { display: flex; height: 302px; gap: 2px; overflow: hidden; }
 .heatmap-sector {
     display: flex;
-    min-width: 78px;
-    flex: 1 1 0;
+    min-width: 28px;
+    flex: 0 0 max(28px, var(--sector-width));
     flex-direction: column;
     overflow: hidden;
     border: 1px solid #151923;
@@ -285,7 +285,8 @@ tbody tr:hover { background: #2a303d; }
 .heatmap-cells { display: flex; height: 100%; flex-direction: column; gap: 1px; }
 .heat-cell {
     display: grid;
-    min-height: 28px;
+    min-height: 18px;
+    flex: 0 0 max(18px, var(--cell-height));
     place-content: center;
     padding: 2px;
     color: #fff;
@@ -491,7 +492,10 @@ tbody tr:hover { background: #2a303d; }
     .index-grid, .breadth-grid, .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
     .market-tables { grid-template-columns: 1fr; }
     .heatmap-groups { overflow-x: auto; }
-    .heatmap-sector { flex: 0 0 100px; }
+    .heatmap-sector {
+        min-width: 70px;
+        flex-basis: max(70px, var(--sector-width));
+    }
     .headlines li { grid-template-columns: 55px 1fr; }
     .headlines li small { display: none; }
     .internal-grid { grid-template-columns: repeat(2, 1fr); }

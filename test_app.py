@@ -111,6 +111,8 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(rows[2]["nifty_impact"], 0)
         heatmap = build_heatmap(rows)
         self.assertGreater(heatmap[0]["impact"], heatmap[1]["impact"])
+        self.assertGreater(heatmap[0]["width_percent"], heatmap[1]["width_percent"])
+        self.assertAlmostEqual(sum(group["width_percent"] for group in heatmap), 100)
         self.assertGreater(heatmap[0]["cells"][0]["weight"], 5)
 
     @patch("app.requests.Session")

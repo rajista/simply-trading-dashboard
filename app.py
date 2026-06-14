@@ -527,8 +527,17 @@ def build_heatmap(rows):
                 "cells": cells,
                 "impact": group_impact,
                 "market_cap": sum(item["market_cap"] or 0 for item in items),
-                "weight": max(group_impact, 0.03) if impact_available else 1,
             }
+        )
+    total_group_size = sum(
+        group["impact"] if impact_available else 1
+        for group in groups
+    ) or 1
+    for group in groups:
+        group["width_percent"] = (
+            (group["impact"] if impact_available else 1)
+            / total_group_size
+            * 100
         )
     sort_key = "impact" if impact_available else "market_cap"
     return sorted(groups, key=lambda group: group[sort_key], reverse=True)

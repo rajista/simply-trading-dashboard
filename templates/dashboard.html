@@ -87,11 +87,11 @@
         </h2>
         <div class="heatmap-groups">
         {% for group in market.heatmap %}
-            <section class="heatmap-sector" style="flex-grow: {{ group.weight }}">
+            <section class="heatmap-sector" style="--sector-width: {{ group.width_percent }}%">
                 <h3>{{ group.sector }}</h3>
                 <div class="heatmap-cells">
                 {% for cell in group.cells %}
-                    <div class="heat-cell {{ 'heat-positive' if (cell.percent or 0) >= 0 else 'heat-negative' }}" style="flex-grow: {{ cell.weight }}; --intensity: {{ cell.intensity }}" title="{{ cell.display_symbol }}: {{ '%+.3f index %% contribution'|format(cell.nifty_impact) if cell.nifty_impact is not none else 'NIFTY impact unavailable' }}">
+                    <div class="heat-cell {{ 'heat-positive' if (cell.percent or 0) >= 0 else 'heat-negative' }}" style="--cell-height: {{ cell.weight }}%; --intensity: {{ cell.intensity }}" title="{{ cell.display_symbol }}: {{ '%+.3f index %% contribution'|format(cell.nifty_impact) if cell.nifty_impact is not none else 'NIFTY impact unavailable' }}">
                         <strong>{{ cell.display_symbol }}</strong><span>{{ "%+.2f%%"|format(cell.percent) if cell.percent is not none else "-" }}</span>
                         {% if cell.nifty_impact is not none and cell.weight >= 12 %}<small>{{ "%+.3f"|format(cell.nifty_impact) }} impact</small>{% endif %}
                     </div>
