@@ -23,8 +23,14 @@ app = Flask(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 NIFTY_50_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv"
-NSE_HOME_URL = "https://www.nseindia.com/"
-NSE_NIFTY_50_API = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050"
+NSE_HOME_URL = (
+    "https://www.nseindia.com/market-data/"
+    "live-equity-market?symbol=NIFTY%2050"
+)
+NSE_NIFTY_50_API = (
+    "https://www.nseindia.com/api/"
+    "equity-stock-indices?index=NIFTY%2050"
+)
 INDEX_SYMBOLS = {
     "^NSEI": "NIFTY 50",
     "^BSESN": "SENSEX",
