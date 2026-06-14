@@ -23,6 +23,8 @@ app = Flask(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 NIFTY_50_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv"
+NSE_HOME_URL = "https://www.nseindia.com/"
+NSE_NIFTY_50_API = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050"
 INDEX_SYMBOLS = {
     "^NSEI": "NIFTY 50",
     "^BSESN": "SENSEX",
@@ -100,6 +102,32 @@ def fetch_nifty50_constituents():
             )
     if len(rows) != 50:
         raise ValueError(f"Expected 50 NIFTY constituents, received {len(rows)}")
+    return rows
+
+
+def fetch_nse_nifty50_snapshot():
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": (
+            "https://www.nseindia.com/market-data/"
+            "live-equity-market?symbol=NIFTY%2050"
+        ),
+    }
+    with requests.Session() as session:
+        session.headers.update(headers)
+        session.get(NSE_HOME_URL, timeout=10).raise_for_status()
+        response = session.get(NSE_NIFTY_50_API, timeout=12)
+        response.raise_for_status()
+        payload = response.json()
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        raise ValueError("NSE NIFTY 50 response has no data rows")
     return rows
 
 
@@ -458,35 +486,104 @@ def build_heatmap(rows):
     grouped = defaultdict(list)
     for row in rows:
         grouped[row["sector"]].append(row)
+    impact_available = any(row.get("nifty_impact") is not None for row in rows)
     groups = []
     for sector, items in grouped.items():
+        def size_value(item):
+            if impact_available:
+                return abs(item.get("nifty_impact") or 0)
+            return math.sqrt(item.get("market_cap") or item.get("volume") or 1)
+
         items = sorted(
             items,
-            key=lambda item: item["market_cap"] or item["volume"] or 0,
+            key=size_value,
             reverse=True,
         )
-        total_weight = sum(math.sqrt(item["market_cap"] or item["volume"] or 1) for item in items) or 1
+        total_weight = sum(size_value(item) for item in items) or 1
         cells = []
         for item in items:
             percent = item["percent"] or 0
             intensity = min(abs(percent) / 5, 1)
+            cell_weight = size_value(item) / total_weight * 100
             cells.append(
                 {
                     **item,
-                    "weight": max(math.sqrt(item["market_cap"] or item["volume"] or 1) / total_weight * 100, 8),
+                    "index_weight": item.get("index_weight"),
+                    "nifty_impact": item.get("nifty_impact"),
+                    "weight": max(cell_weight, 5),
                     "intensity": round(0.28 + intensity * 0.62, 2),
                 }
             )
-        groups.append({"sector": sector, "cells": cells, "market_cap": sum(i["market_cap"] or 0 for i in items)})
-    return sorted(groups, key=lambda group: group["market_cap"], reverse=True)
+        group_impact = sum(abs(item.get("nifty_impact") or 0) for item in items)
+        groups.append(
+            {
+                "sector": sector,
+                "cells": cells,
+                "impact": group_impact,
+                "market_cap": sum(item["market_cap"] or 0 for item in items),
+                "weight": max(group_impact, 0.03) if impact_available else 1,
+            }
+        )
+    sort_key = "impact" if impact_available else "market_cap"
+    return sorted(groups, key=lambda group: group[sort_key], reverse=True)
 
 
-def load_market_dashboard(stocks):
+def apply_nifty_impact(rows, snapshot):
+    ffmc_by_symbol = {}
+    for item in snapshot:
+        symbol = str(item.get("symbol") or item.get("identifier") or "").strip()
+        if symbol.upper() in {"NIFTY 50", "NIFTY50"}:
+            continue
+        try:
+            ffmc = float(str(item.get("ffmc", "")).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        if symbol and math.isfinite(ffmc) and ffmc > 0:
+            ffmc_by_symbol[symbol.upper()] = ffmc
+
+    matched = [
+        row for row in rows
+        if row["display_symbol"].upper() in ffmc_by_symbol
+    ]
+    required_matches = min(40, len(rows))
+    if len(matched) < required_matches:
+        raise ValueError(
+            f"NSE NIFTY 50 response matched only {len(matched)} "
+            f"of {len(rows)} stocks"
+        )
+    total_ffmc = sum(ffmc_by_symbol[row["display_symbol"].upper()] for row in matched)
+    if not total_ffmc:
+        raise ValueError("NSE NIFTY 50 response has no matching FFMC values")
+
+    for row in rows:
+        ffmc = ffmc_by_symbol.get(row["display_symbol"].upper())
+        if ffmc is None:
+            row["index_weight"] = None
+            row["nifty_impact"] = None
+            continue
+        index_weight = ffmc / total_ffmc
+        row["index_weight"] = index_weight
+        row["nifty_impact"] = (
+            index_weight * row["percent"]
+            if row["percent"] is not None
+            else None
+        )
+    return rows
+
+
+def load_market_dashboard(stocks, allow_impact_fallback=False):
     quotes, _ = get_market_quotes(stocks)
     quotes = quotes or {}
     index_history = fetch_index_history()
     stock_history = fetch_stock_history(stocks)
     rows = build_stock_rows(quotes, stock_history, stocks)
+    impact_available = False
+    try:
+        apply_nifty_impact(rows, fetch_nse_nifty50_snapshot())
+        impact_available = any(row.get("nifty_impact") is not None for row in rows)
+    except Exception:
+        if not allow_impact_fallback:
+            raise
     available = [row for row in rows if row["percent"] is not None]
     gainers = sorted(available, key=lambda row: row["percent"], reverse=True)
     losers = sorted(
@@ -508,6 +605,7 @@ def load_market_dashboard(stocks):
         "signals": sorted(rows, key=lambda row: abs(row["percent"] or 0), reverse=True)[:10],
         "sectors": build_sector_performance(rows),
         "heatmap": build_heatmap(rows),
+        "impact_available": impact_available,
         "market_stats": build_market_stats(rows),
         "internals": build_market_internals(rows),
     }
@@ -716,10 +814,16 @@ def market_performance():
 def dashboard():
     stocks, constituents_stale = get_stock_universe()
     universe_key = ",".join(stock["symbol"] for stock in stocks)
+    market_key = f"market:{universe_key}"
+    with _CACHE_LOCK:
+        has_cached_market = market_key in _CACHE
     market, market_stale = get_cached_swr(
-        f"market:{universe_key}",
+        market_key,
         MARKET_CACHE_TTL,
-        lambda: load_market_dashboard(stocks),
+        lambda: load_market_dashboard(
+            stocks,
+            allow_impact_fallback=not has_cached_market,
+        ),
     )
     headlines, news_stale = get_cached_swr("news", NEWS_CACHE_TTL, fetch_headlines)
     calendar_entries, calendar_stale = get_cached_swr(
@@ -737,6 +841,7 @@ def dashboard():
         "signals": [],
         "sectors": [],
         "heatmap": [],
+        "impact_available": False,
         "market_stats": build_market_stats([]),
         "internals": build_market_internals([]),
     }

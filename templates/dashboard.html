@@ -3,6 +3,14 @@
 {% block title %}Simply Trading - Indian Market Dashboard{% endblock %}
 
 {% block announcement %}
+<aside class="option-chain-promo" aria-label="AI Option Chain Analysis">
+    <div>
+        <strong>AI Option Chain Analysis</strong>
+        <span>Explore AI-assisted strategy ideas based on market direction, volatility and option-chain signals.</span>
+        <small>Educational insights only, not investment advice.</small>
+    </div>
+    <a href="https://trading-simplified.com/option-chain-analysis/" target="_blank" rel="noopener noreferrer">Analyse Options</a>
+</aside>
 <div class="announcement">India Market Dashboard: NSE indices, breadth, movers and sector performance</div>
 {% endblock %}
 
@@ -73,15 +81,19 @@
     </div>
 
     <article class="heatmap panel">
-        <h2>NIFTY 50 Stocks - 1 Day Performance {% if constituents_stale %}<small>cached list</small>{% endif %}</h2>
+        <h2>NIFTY 50 Stocks - 1 Day Performance
+            {% if not market.impact_available %}<small>Impact data unavailable</small>
+            {% elif constituents_stale %}<small>cached list</small>{% endif %}
+        </h2>
         <div class="heatmap-groups">
         {% for group in market.heatmap %}
-            <section class="heatmap-sector">
+            <section class="heatmap-sector" style="flex-grow: {{ group.weight }}">
                 <h3>{{ group.sector }}</h3>
                 <div class="heatmap-cells">
                 {% for cell in group.cells %}
-                    <div class="heat-cell {{ 'heat-positive' if (cell.percent or 0) >= 0 else 'heat-negative' }}" style="flex-grow: {{ cell.weight }}; --intensity: {{ cell.intensity }}">
+                    <div class="heat-cell {{ 'heat-positive' if (cell.percent or 0) >= 0 else 'heat-negative' }}" style="flex-grow: {{ cell.weight }}; --intensity: {{ cell.intensity }}" title="{{ cell.display_symbol }}: {{ '%+.3f index %% contribution'|format(cell.nifty_impact) if cell.nifty_impact is not none else 'NIFTY impact unavailable' }}">
                         <strong>{{ cell.display_symbol }}</strong><span>{{ "%+.2f%%"|format(cell.percent) if cell.percent is not none else "-" }}</span>
+                        {% if cell.nifty_impact is not none and cell.weight >= 12 %}<small>{{ "%+.3f"|format(cell.nifty_impact) }} impact</small>{% endif %}
                     </div>
                 {% endfor %}
                 </div>

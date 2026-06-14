@@ -13,6 +13,8 @@ from app import (
     build_candles,
     build_calendar_panels,
     build_heatmap,
+    apply_nifty_impact,
+    fetch_nse_nifty50_snapshot,
     fetch_nifty50_constituents,
     format_volume,
     get_cached,
@@ -45,6 +47,7 @@ SAMPLE_MARKET = {
     "signals": [],
     "sectors": [],
     "heatmap": [],
+    "impact_available": False,
     "market_stats": {
         "tracked": 0, "priced": 0, "advance_ratio": 0,
         "average_change": None, "total_volume": 0, "total_market_cap": 0,
@@ -84,6 +87,41 @@ class DataModelTests(unittest.TestCase):
         breadth = build_breadth(rows)
         self.assertEqual(breadth[0]["left_count"], 1)
         self.assertEqual(len(build_heatmap(rows)[0]["cells"]), 2)
+
+    def test_nifty_impact_weights_and_heatmap_sizing(self):
+        rows = [
+            {"sector": "Energy", "display_symbol": "AAA", "percent": 2.0,
+             "market_cap": 10, "volume": 1},
+            {"sector": "Tech", "display_symbol": "BBB", "percent": -1.0,
+             "market_cap": 10, "volume": 1},
+            {"sector": "Tech", "display_symbol": "CCC", "percent": 0.0,
+             "market_cap": 10, "volume": 1},
+        ]
+        snapshot = [
+            {"symbol": "NIFTY 50", "ffmc": 9999},
+            {"symbol": "AAA", "ffmc": "600"},
+            {"symbol": "BBB", "ffmc": 300},
+            {"symbol": "CCC", "ffmc": 100},
+            {"symbol": "UNKNOWN", "ffmc": "bad"},
+        ]
+        apply_nifty_impact(rows, snapshot)
+        self.assertAlmostEqual(sum(row["index_weight"] for row in rows), 1.0)
+        self.assertAlmostEqual(rows[0]["nifty_impact"], 1.2)
+        self.assertAlmostEqual(rows[1]["nifty_impact"], -0.3)
+        self.assertEqual(rows[2]["nifty_impact"], 0)
+        heatmap = build_heatmap(rows)
+        self.assertGreater(heatmap[0]["impact"], heatmap[1]["impact"])
+        self.assertGreater(heatmap[0]["cells"][0]["weight"], 5)
+
+    @patch("app.requests.Session")
+    def test_nse_snapshot_fetch_uses_session_and_returns_rows(self, session_class):
+        session = session_class.return_value.__enter__.return_value
+        session.get.return_value.raise_for_status.return_value = None
+        session.get.return_value.json.return_value = {
+            "data": [{"symbol": "RELIANCE", "ffmc": 100}]
+        }
+        self.assertEqual(fetch_nse_nifty50_snapshot()[0]["symbol"], "RELIANCE")
+        self.assertEqual(session.get.call_count, 2)
 
     def test_cache_returns_stale_data_after_failure(self):
         _CACHE.clear()
@@ -163,7 +201,11 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260614-2", html)
+        self.assertIn("/static/css/style.css?v=20260614-3", html)
+        self.assertIn("AI Option Chain Analysis", html)
+        self.assertIn("Analyse Options", html)
+        self.assertIn("Educational insights only", html)
+        self.assertIn("Impact data unavailable", html)
         self.assertIn('action="/screener"', html)
         self.assertIn('class="active" href="/">Home</a>', html)
         self.assertEqual(html.count('name="search"'), 1)
@@ -181,6 +223,7 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(html.count('name="search"'), 1)
         self.assertEqual(html.count('name="sector"'), 1)
         self.assertIn('class="active" href="/screener">Screener</a>', html)
+        self.assertNotIn("AI Option Chain Analysis", html)
         self.assert_tool_navigation(html)
 
     @patch("app.get_stock_universe", return_value=(STOCKS, False))
