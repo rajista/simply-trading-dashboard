@@ -163,6 +163,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
+        self.assertIn("/static/css/style.css?v=20260614-2", html)
         self.assertIn('action="/screener"', html)
         self.assertIn('class="active" href="/">Home</a>', html)
         self.assertEqual(html.count('name="search"'), 1)
