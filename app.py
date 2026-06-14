@@ -220,7 +220,7 @@ def _refresh_cached_value(key, ttl, loader):
             _CACHE_REFRESHING.discard(key)
 
 
-def get_cached_swr(key, ttl, loader, now=None):
+def get_cached_swr(key, ttl, loader, now=None, cold_async=False):
     """Serve expired data immediately while one background refresh runs."""
     current = time_module.time() if now is None else now
     should_refresh = False
@@ -228,7 +228,8 @@ def get_cached_swr(key, ttl, loader, now=None):
         cached = _CACHE.get(key)
         if cached and cached["expires"] > current:
             return cached["data"], False
-        if cached and key not in _CACHE_REFRESHING:
+        refreshing = key in _CACHE_REFRESHING
+        if (cached or cold_async) and not refreshing:
             _CACHE_REFRESHING.add(key)
             should_refresh = True
     if cached:
@@ -240,6 +241,15 @@ def get_cached_swr(key, ttl, loader, now=None):
                 name=f"cache-refresh-{key[:32]}",
             ).start()
         return cached["data"], True
+    if cold_async:
+        if should_refresh:
+            threading.Thread(
+                target=_refresh_cached_value,
+                args=(key, ttl, loader),
+                daemon=True,
+                name=f"cache-refresh-{key[:32]}",
+            ).start()
+        return None, False
     return get_cached(key, ttl, loader, now=now)
 
 
@@ -839,12 +849,19 @@ def dashboard():
             stocks,
             allow_impact_fallback=not has_cached_market,
         ),
+        cold_async=True,
     )
-    headlines, news_stale = get_cached_swr("news", NEWS_CACHE_TTL, fetch_headlines)
+    headlines, news_stale = get_cached_swr(
+        "news",
+        NEWS_CACHE_TTL,
+        fetch_headlines,
+        cold_async=True,
+    )
     calendar_entries, calendar_stale = get_cached_swr(
         f"company_calendar:{universe_key}",
         CALENDAR_CACHE_TTL,
         lambda: fetch_company_calendar(stocks),
+        cold_async=True,
     )
     market = market or {
         "indices": [],

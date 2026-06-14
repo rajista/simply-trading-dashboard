@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+import time
 from unittest.mock import patch
 
 import pandas as pd
@@ -131,6 +132,22 @@ class DataModelTests(unittest.TestCase):
         data, stale = get_cached("x", 5, lambda: (_ for _ in ()).throw(RuntimeError()), now=20)
         self.assertEqual(data, {"ok": True})
         self.assertTrue(stale)
+
+    def test_cold_async_cache_returns_immediately_and_refreshes_once(self):
+        _CACHE.clear()
+        result, stale = get_cached_swr(
+            "cold",
+            60,
+            lambda: {"ready": True},
+            cold_async=True,
+        )
+        self.assertIsNone(result)
+        self.assertFalse(stale)
+        for _ in range(50):
+            if "cold" in _CACHE:
+                break
+            time.sleep(0.01)
+        self.assertEqual(_CACHE["cold"]["data"], {"ready": True})
 
     def test_calendar_panels_include_sessions_and_earnings(self):
         panels = build_calendar_panels(
