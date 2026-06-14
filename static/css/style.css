@@ -134,10 +134,10 @@ a { color: inherit; }
 }
 
 .dashboard-main, .screener-main {
-    width: 94%;
-    max-width: 1500px;
+    width: calc(100% - 16px);
+    max-width: none;
     margin: 0 auto;
-    padding: 16px 0 28px;
+    padding: 12px 0 28px;
 }
 .panel {
     border: 1px solid var(--border);
