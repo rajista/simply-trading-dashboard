@@ -203,7 +203,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260614-3", html)
+        self.assertIn("/static/css/style.css?v=20260614-4", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("Educational insights only", html)
