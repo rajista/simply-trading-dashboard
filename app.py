@@ -23,6 +23,7 @@ app = Flask(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 NIFTY_50_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty50list.csv"
+NIFTY_500_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
 NSE_HOME_URL = (
     "https://www.nseindia.com/market-data/"
     "live-equity-market?symbol=NIFTY%2050"
@@ -86,9 +87,9 @@ def fetch_price_data(symbols):
     return quotes
 
 
-def fetch_nifty50_constituents():
+def fetch_index_constituents(url, minimum_count=None):
     response = requests.get(
-        NIFTY_50_URL,
+        url,
         timeout=12,
         headers={"User-Agent": "Mozilla/5.0 SimplyTrading/1.0"},
     )
@@ -108,9 +109,17 @@ def fetch_nifty50_constituents():
                     "isin": (item.get("ISIN Code") or "").strip(),
                 }
             )
-    if len(rows) != 50:
-        raise ValueError(f"Expected 50 NIFTY constituents, received {len(rows)}")
+    if minimum_count and len(rows) < minimum_count:
+        raise ValueError(f"Expected at least {minimum_count} constituents, received {len(rows)}")
     return rows
+
+
+def fetch_nifty50_constituents():
+    return fetch_index_constituents(NIFTY_50_URL, 50)
+
+
+def fetch_nifty500_constituents():
+    return fetch_index_constituents(NIFTY_500_URL, 500)
 
 
 def fetch_nse_nifty50_snapshot():
@@ -189,6 +198,15 @@ def get_stock_universe():
         "nifty50_constituents",
         CONSTITUENT_CACHE_TTL,
         fetch_nifty50_constituents,
+    )
+    return (universe or STOCKS), stale
+
+
+def get_nifty500_universe():
+    universe, stale = get_cached_swr(
+        "nifty500_constituents",
+        CONSTITUENT_CACHE_TTL,
+        fetch_nifty500_constituents,
     )
     return (universe or STOCKS), stale
 
@@ -390,16 +408,27 @@ def fetch_index_history():
 
 
 def fetch_stock_history(stocks):
-    return yf.download(
-        [stock["symbol"] for stock in stocks],
-        period="1y",
-        interval="1d",
-        group_by="ticker",
-        auto_adjust=False,
-        progress=False,
-        threads=True,
-        timeout=15,
-    )
+    symbols = [stock["symbol"] for stock in stocks]
+    frames = []
+    for start in range(0, len(symbols), 250):
+        chunk = symbols[start:start + 250]
+        frame = yf.download(
+            chunk,
+            period="1y",
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+            timeout=20,
+        )
+        if frame is not None and not frame.empty:
+            frames.append(frame)
+    if not frames:
+        return pd.DataFrame()
+    if len(frames) == 1:
+        return frames[0]
+    return pd.concat(frames, axis=1)
 
 
 def build_candles(frame, limit=32):
@@ -477,6 +506,13 @@ def build_stock_rows(quotes, history, stocks):
         current = quote.get("price")
         if current is None and not closes.empty:
             current = float(closes.iloc[-1])
+        previous_close = float(closes.iloc[-2]) if len(closes) > 1 else None
+        change = quote.get("change")
+        percent = quote.get("percent")
+        if change is None and current is not None and previous_close is not None:
+            change = current - previous_close
+        if percent is None and current is not None and previous_close:
+            percent = change / previous_close * 100 if change is not None else None
         sma50 = float(closes.tail(50).mean()) if len(closes) >= 20 else None
         sma200 = float(closes.tail(200).mean()) if len(closes) >= 100 else None
         high52 = float(closes.max()) if not closes.empty else None
@@ -511,8 +547,8 @@ def build_stock_rows(quotes, history, stocks):
                 **stock,
                 "display_symbol": symbol.removesuffix(".NS"),
                 "price": current,
-                "change": quote.get("change"),
-                "percent": quote.get("percent"),
+                "change": change,
+                "percent": percent,
                 "volume": current_volume,
                 "volume_change": volume_change,
                 "five_day_change": five_day_change,
@@ -826,12 +862,24 @@ def apply_nifty_impact(rows, snapshot):
     return rows
 
 
-def load_market_dashboard(stocks, allow_impact_fallback=False):
+def merge_stock_lists(primary, secondary):
+    merged = {}
+    for stock in primary + secondary:
+        merged[stock["symbol"]] = stock
+    return list(merged.values())
+
+
+def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False):
+    broad_stocks = broad_stocks or stocks
+    all_stocks = merge_stock_lists(stocks, broad_stocks)
     quotes, _ = get_market_quotes(stocks)
     quotes = quotes or {}
     index_history = fetch_index_history()
-    stock_history = fetch_stock_history(stocks)
-    rows = build_stock_rows(quotes, stock_history, stocks)
+    stock_history = fetch_stock_history(all_stocks)
+    all_rows = build_stock_rows(quotes, stock_history, all_stocks)
+    rows_by_symbol = {row["symbol"]: row for row in all_rows}
+    rows = [rows_by_symbol[stock["symbol"]] for stock in stocks if stock["symbol"] in rows_by_symbol]
+    broad_rows = [rows_by_symbol[stock["symbol"]] for stock in broad_stocks if stock["symbol"] in rows_by_symbol]
     impact_available = False
     try:
         nse_snapshot = fetch_nse_nifty50_snapshot()
@@ -841,30 +889,31 @@ def load_market_dashboard(stocks, allow_impact_fallback=False):
     except Exception:
         if not allow_impact_fallback:
             raise
-    available = [row for row in rows if row["percent"] is not None]
+    available = [row for row in broad_rows if row["percent"] is not None]
     gainers = sorted(available, key=lambda row: row["percent"], reverse=True)
     losers = sorted(
         [row for row in available if row["percent"] < 0],
         key=lambda row: row["percent"],
     )
     active = sorted(
-        [row for row in rows if row["volume"] is not None],
+        [row for row in broad_rows if row["volume"] is not None],
         key=lambda row: row["volume"],
         reverse=True,
     )
     return {
         "indices": build_index_cards(index_history),
-        "rows": rows,
-        "breadth": build_breadth(rows),
-        "gainers": gainers[:8],
-        "losers": losers[:8],
-        "active": active[:8],
-        "signals": sorted(rows, key=lambda row: abs(row["percent"] or 0), reverse=True)[:10],
-        "sectors": build_sector_performance(rows),
+        "rows": broad_rows,
+        "nifty50_rows": rows,
+        "breadth": build_breadth(broad_rows),
+        "gainers": gainers[:14],
+        "losers": losers[:14],
+        "active": active[:14],
+        "signals": sorted(broad_rows, key=lambda row: abs(row["percent"] or 0), reverse=True)[:18],
+        "sectors": build_sector_performance(broad_rows),
         "heatmap": build_heatmap(rows),
-        "hover_data": build_stock_hover_data(rows),
+        "hover_data": build_stock_hover_data(broad_rows),
         "impact_available": impact_available,
-        "market_stats": build_market_stats(rows),
+        "market_stats": build_market_stats(broad_rows),
         "internals": build_market_internals(rows),
     }
 
@@ -1057,8 +1106,10 @@ def market_performance():
 @app.route("/")
 def dashboard():
     stocks, constituents_stale = get_stock_universe()
+    broad_stocks, broad_constituents_stale = get_nifty500_universe()
     universe_key = ",".join(stock["symbol"] for stock in stocks)
-    market_key = f"market:{universe_key}"
+    broad_universe_key = ",".join(stock["symbol"] for stock in broad_stocks)
+    market_key = f"market:{universe_key}|broad:{broad_universe_key}"
     with _CACHE_LOCK:
         has_cached_market = market_key in _CACHE
     market, market_stale = get_cached_swr(
@@ -1066,6 +1117,7 @@ def dashboard():
         MARKET_CACHE_TTL,
         lambda: load_market_dashboard(
             stocks,
+            broad_stocks,
             allow_impact_fallback=not has_cached_market,
         ),
         cold_async=True,
@@ -1090,6 +1142,7 @@ def dashboard():
     market = market or {
         "indices": [],
         "rows": [],
+        "nifty50_rows": [],
         "breadth": [],
         "gainers": [],
         "losers": [],
@@ -1123,7 +1176,8 @@ def dashboard():
         fii_dii=fii_dii,
         fii_dii_stale=fii_dii_stale,
         calendar_stale=calendar_stale,
-        constituents_stale=constituents_stale,
+        constituents_stale=constituents_stale or broad_constituents_stale,
+        broad_universe_count=len(broad_stocks),
         nearby_events=calendar["events"],
         earnings=earnings,
         market_brief=brief,

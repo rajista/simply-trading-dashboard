@@ -64,17 +64,17 @@
 <section class="dashboard-grid">
     <div class="market-tables panel">
         <div class="mover-column">
-            <h2>Top Gainers</h2>
+            <h2>Top Gainers <small>NIFTY 500</small></h2>
             <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
             <tbody>{% for row in market.gainers %}<tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="positive">{{ "%+.2f%%"|format(row.percent) }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
         </div>
         <div class="mover-column">
-            <h2>Top Losers</h2>
+            <h2>Top Losers <small>NIFTY 500</small></h2>
             <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
             <tbody>{% for row in market.losers %}<tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="negative">{{ "%+.2f%%"|format(row.percent) }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
         </div>
         <div class="mover-column">
-            <h2>Most Active</h2>
+            <h2>Most Active <small>NIFTY 500</small></h2>
             <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
             <tbody>{% for row in market.active %}<tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="{{ 'positive' if row.percent and row.percent > 0 else 'negative' if row.percent and row.percent < 0 }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
         </div>
@@ -104,7 +104,7 @@
     </article>
 
     <article class="signals panel">
-        <h2>Technical Signals</h2>
+        <h2>Technical Signals <small>NIFTY 500</small></h2>
         <div class="signal-columns">
         {% for row in market.signals %}
             <div><span class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</span><b>{{ row.signal }}</b><em class="{{ 'positive' if row.percent and row.percent > 0 else 'negative' if row.percent and row.percent < 0 }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</em></div>
@@ -113,7 +113,7 @@
     </article>
 
     <article class="sector-panel panel">
-        <h2>Sector Performance</h2>
+        <h2>Sector Performance <small>NIFTY 500</small></h2>
         <table class="sector-table">
             <thead><tr><th>Sector</th><th>Stocks</th><th>Adv.</th><th>Avg Change</th><th>Volume</th><th>Leader</th><th>Laggard</th></tr></thead>
             <tbody>{% for sector in market.sectors %}<tr>
@@ -142,7 +142,7 @@
         <table><thead><tr><th>Index</th><th>Last</th><th>Change</th></tr></thead>
         <tbody>{% for index in market.indices if index.available %}<tr><td class="link">{{ index.name }}</td><td>{{ "%.2f"|format(index.price) }}</td><td class="{{ 'positive' if index.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(index.percent) }}</td></tr>{% endfor %}</tbody></table>
         <h2 class="recent-title">Recent Quotes</h2>
-        <div class="recent-quotes">{% for row in market.rows[:6] %}<span class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }} <b class="{{ 'positive' if row.percent and row.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</b></span>{% endfor %}</div>
+        <div class="recent-quotes">{% for row in market.active[:6] %}<span class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }} <b class="{{ 'positive' if row.percent and row.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</b></span>{% endfor %}</div>
         <h2 class="recent-title">NIFTY 50 Internals</h2>
         <div class="internal-grid">
             <div><span>Above SMA50</span><strong>{{ market.internals.above_sma50 }}/50</strong></div>

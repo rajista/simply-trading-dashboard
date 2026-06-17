@@ -18,6 +18,7 @@ from app import (
     apply_nse_quote_snapshot,
     fetch_nse_nifty50_snapshot,
     fetch_nifty50_constituents,
+    fetch_nifty500_constituents,
     format_crore_value,
     format_volume,
     get_cached,
@@ -44,6 +45,7 @@ SAMPLE_MARKET = {
          "change": 120, "percent": 0.5, "date": "Jun 12", "candles": []}
     ],
     "rows": [],
+    "nifty50_rows": [],
     "breadth": [],
     "gainers": [],
     "losers": [],
@@ -209,6 +211,19 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(len(stocks), 50)
         self.assertEqual(stocks[0]["symbol"], "SYM0.NS")
 
+    @patch("app.requests.get")
+    def test_official_nifty500_feed_requires_five_hundred_stocks(self, get):
+        lines = ["Company Name,Industry,Symbol,Series,ISIN Code"]
+        lines.extend(
+            f"Company {index},Sector {index % 12},N500{index},EQ,ISIN{index}"
+            for index in range(504)
+        )
+        get.return_value.text = "\n".join(lines)
+        get.return_value.raise_for_status.return_value = None
+        stocks = fetch_nifty500_constituents()
+        self.assertEqual(len(stocks), 504)
+        self.assertEqual(stocks[0]["symbol"], "N5000.NS")
+
 
 class RouteTests(unittest.TestCase):
     TOOL_LINKS = {
@@ -247,9 +262,10 @@ class RouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 302)
             self.assertEqual(response.headers["Location"], destination)
 
+    @patch("app.get_nifty500_universe", return_value=([], False))
     @patch("app.get_stock_universe", return_value=([], False))
     @patch("app.get_cached_swr")
-    def test_dashboard_structure_and_search_routing(self, cached, universe):
+    def test_dashboard_structure_and_search_routing(self, cached, universe, broad_universe):
         cached.side_effect = [(SAMPLE_MARKET, False), ([], False), ([], False), ([], False)]
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn("NIFTY 50 Stocks - 1 Day Performance", html)
@@ -261,6 +277,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
+        self.assertIn("NIFTY 500", html)
         self.assertIn('class="option-chain-promo" href="https://trading-simplified.com/option-chain-analysis/"', html)
         self.assertIn("Educational insights only", html)
         self.assertIn("Impact data unavailable", html)

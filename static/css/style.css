@@ -262,6 +262,11 @@ a { color: inherit; }
 .mover-column table { table-layout: fixed; }
 .mover-column td, .mover-column th { overflow: hidden; text-overflow: ellipsis; }
 .mover-column h2 { margin: 0 0 4px; color: var(--muted); }
+.mover-column h2 small, .signals h2 small, .sector-panel h2 small {
+    color: #f6c85f;
+    font-size: 9px;
+    font-weight: 700;
+}
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th { color: #aab0bf; text-align: left; font-size: 10px; font-weight: 600; }
 td, th { padding: 3px 4px; white-space: nowrap; }
