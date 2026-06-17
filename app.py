@@ -31,6 +31,7 @@ NSE_NIFTY_50_API = (
     "https://www.nseindia.com/api/"
     "equity-stock-indices?index=NIFTY%2050"
 )
+NSE_FII_DII_API = "https://www.nseindia.com/api/fiidiiTradeReact"
 INDEX_SYMBOLS = {
     "^NSEI": "NIFTY 50",
     "^BSESN": "SENSEX",
@@ -42,10 +43,11 @@ NEWS_FEEDS = (
     ("Moneycontrol", "https://www.moneycontrol.com/rss/marketreports.xml"),
 )
 PAGE_REDIRECTS = {
-    "articles": "https://articles.trading-simplified.com/blog/",
-    "swp-calculator": "https://swp-nifty-v2.netlify.app/",
-    "option-chain-analysis": "https://articles.trading-simplified.com/option-chain-analysis/",
-    "market-performance": "https://market-performace-v1.streamlit.app/",
+    "articles": "https://trading-simplified.com/blog/",
+    "swp-calculator": "https://trading-simplified.com/swp-calculator/",
+    "option-chain-analysis": "https://trading-simplified.com/option-chain-analysis/",
+    "option-builder": "https://trading-simplified.com/option-builder/",
+    "market-performance": "https://trading-simplified.com/market-performance/",
 }
 MARKET_CACHE_TTL = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "1200"))
 NEWS_CACHE_TTL = 900
@@ -137,6 +139,51 @@ def fetch_nse_nifty50_snapshot():
     return rows
 
 
+def fetch_fii_dii_activity():
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.nseindia.com/",
+    }
+    with requests.Session() as session:
+        session.headers.update(headers)
+        try:
+            session.get("https://www.nseindia.com/", timeout=8)
+        except requests.RequestException:
+            pass
+        response = session.get(NSE_FII_DII_API, timeout=12)
+        response.raise_for_status()
+        payload = response.json()
+    return normalize_fii_dii_activity(payload)
+
+
+def normalize_fii_dii_activity(payload):
+    if not isinstance(payload, list):
+        raise ValueError("NSE FII/DII response has no rows")
+    rows = []
+    for item in payload:
+        category = str(item.get("category") or "").strip()
+        if not category:
+            continue
+        rows.append(
+            {
+                "category": "FII/FPI" if "FII" in category.upper() else category,
+                "date": str(item.get("date") or "").strip(),
+                "buy": _parse_number(item.get("buyValue")),
+                "sell": _parse_number(item.get("sellValue")),
+                "net": _parse_number(item.get("netValue")),
+            }
+        )
+    if not rows:
+        raise ValueError("NSE FII/DII response has no usable rows")
+    return rows
+
+
 def get_stock_universe():
     universe, stale = get_cached_swr(
         "nifty50_constituents",
@@ -166,6 +213,12 @@ def format_volume(value):
     if value >= 1e5:
         return f"{value / 1e5:.2f} L"
     return f"{value:,.0f}"
+
+
+def format_crore_value(value):
+    if value is None:
+        return "-"
+    return f"Rs {float(value):,.2f} Cr"
 
 
 def get_market_status(now=None):
@@ -253,6 +306,19 @@ def get_cached_swr(key, ttl, loader, now=None, cold_async=False):
     return get_cached(key, ttl, loader, now=now)
 
 
+def _parse_number(value):
+    if value is None:
+        return None
+    try:
+        cleaned = str(value).replace(",", "").strip()
+        if cleaned in {"", "-", "None", "nan"}:
+            return None
+        number = float(cleaned)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def get_market_quotes(stocks):
     symbols = [stock["symbol"] for stock in stocks]
     key = f"quotes:{','.join(symbols)}"
@@ -281,6 +347,33 @@ def _clean_number(value):
     if value is None or pd.isna(value):
         return None
     return float(value)
+
+
+def apply_nse_quote_snapshot(rows, snapshot):
+    by_symbol = {}
+    for item in snapshot:
+        symbol = str(item.get("symbol") or item.get("identifier") or "").strip().upper()
+        if not symbol or symbol in {"NIFTY 50", "NIFTY50"}:
+            continue
+        by_symbol[symbol] = item
+
+    for row in rows:
+        item = by_symbol.get(row["display_symbol"].upper())
+        if not item:
+            continue
+        price = _parse_number(item.get("lastPrice"))
+        change = _parse_number(item.get("change"))
+        percent = _parse_number(item.get("pChange"))
+        volume = _parse_number(item.get("totalTradedVolume"))
+        if price is not None:
+            row["price"] = price
+        if change is not None:
+            row["change"] = change
+        if percent is not None:
+            row["percent"] = percent
+        if volume is not None:
+            row["volume"] = volume
+    return rows
 
 
 def fetch_index_history():
@@ -423,6 +516,11 @@ def build_stock_rows(quotes, history, stocks):
                 "volume": current_volume,
                 "volume_change": volume_change,
                 "five_day_change": five_day_change,
+                "chart_series": [
+                    round(float(value), 2)
+                    for value in closes.tail(90).tolist()
+                    if not pd.isna(value)
+                ],
                 "market_cap": quote.get("market_cap"),
                 "sma50": sma50,
                 "sma200": sma200,
@@ -432,6 +530,76 @@ def build_stock_rows(quotes, history, stocks):
             }
         )
     return rows
+
+
+def _with_minimum_layout_weights(items, minimum_share):
+    raw_total = sum(max(float(item.get("raw_weight") or 0), 0) for item in items)
+    if raw_total <= 0:
+        raw_total = float(len(items) or 1)
+        items = [{**item, "raw_weight": 1.0} for item in items]
+    floor = raw_total * minimum_share
+    return [
+        {
+            **item,
+            "layout_weight": max(float(item.get("raw_weight") or 0), floor),
+        }
+        for item in items
+    ]
+
+
+def _binary_treemap(items, x=0.0, y=0.0, width=100.0, height=100.0):
+    """Lay out weighted items in a stable mosaic without clipping small entries."""
+    if not items:
+        return []
+    ordered = sorted(items, key=lambda item: item["layout_weight"], reverse=True)
+
+    def layout(group, left, top, box_width, box_height):
+        if len(group) == 1:
+            return [{
+                **group[0],
+                "x": round(left, 4),
+                "y": round(top, 4),
+                "width": round(box_width, 4),
+                "height": round(box_height, 4),
+            }]
+
+        total = sum(item["layout_weight"] for item in group)
+        target = total / 2
+        running = 0.0
+        split_at = 1
+        closest = float("inf")
+        for index in range(1, len(group)):
+            running += group[index - 1]["layout_weight"]
+            distance = abs(target - running)
+            if distance <= closest:
+                closest = distance
+                split_at = index
+            else:
+                break
+
+        first = group[:split_at]
+        second = group[split_at:]
+        first_weight = sum(item["layout_weight"] for item in first)
+        ratio = first_weight / total if total else 0.5
+        if box_width >= box_height:
+            first_width = box_width * ratio
+            return layout(first, left, top, first_width, box_height) + layout(
+                second,
+                left + first_width,
+                top,
+                box_width - first_width,
+                box_height,
+            )
+        first_height = box_height * ratio
+        return layout(first, left, top, box_width, first_height) + layout(
+            second,
+            left,
+            top + first_height,
+            box_width,
+            box_height - first_height,
+        )
+
+    return layout(ordered, x, y, width, height)
 
 
 def build_breadth(rows):
@@ -498,59 +666,121 @@ def build_sector_performance(rows):
     )
 
 
+def heatmap_sector_name(sector):
+    value = (sector or "Other").lower()
+    if any(term in value for term in ("financial", "bank", "finance", "insurance")):
+        return "Financial"
+    if any(term in value for term in ("information technology", "technology", "software")):
+        return "Technology"
+    if any(term in value for term in ("oil", "gas", "power", "energy")):
+        return "Energy"
+    if any(term in value for term in ("automobile", "auto")):
+        return "Auto"
+    if any(term in value for term in ("consumer", "fmcg", "fast moving")):
+        return "Consumer"
+    if any(term in value for term in ("healthcare", "pharma", "pharmaceutical")):
+        return "Healthcare"
+    if any(term in value for term in ("metal", "mining", "cement", "material", "chemical")):
+        return "Materials"
+    if any(term in value for term in ("capital goods", "construction", "industrial")):
+        return "Industrials"
+    if any(term in value for term in ("telecom", "communication")):
+        return "Communication"
+    return "Other"
+
+
 def build_heatmap(rows):
     grouped = defaultdict(list)
     for row in rows:
-        grouped[row["sector"]].append(row)
+        grouped[heatmap_sector_name(row["sector"])].append(row)
     impact_available = any(row.get("nifty_impact") is not None for row in rows)
-    groups = []
+    sector_items = []
     for sector, items in grouped.items():
-        def size_value(item):
-            if impact_available:
-                return abs(item.get("nifty_impact") or 0)
-            return math.sqrt(item.get("market_cap") or item.get("volume") or 1)
-
-        items = sorted(
-            items,
-            key=size_value,
-            reverse=True,
+        impact = sum(abs(item.get("nifty_impact") or 0) for item in items)
+        fallback = sum(
+            math.sqrt(item.get("market_cap") or item.get("volume") or 1)
+            for item in items
         )
-        total_weight = sum(size_value(item) for item in items) or 1
+        sector_items.append({
+            "sector": sector,
+            "rows": items,
+            "impact": impact,
+            "market_cap": sum(item.get("market_cap") or 0 for item in items),
+            "raw_weight": impact if impact_available else fallback,
+        })
+
+    groups = []
+    sector_rectangles = _binary_treemap(
+        _with_minimum_layout_weights(sector_items, 0.035)
+    )
+    for sector_rectangle in sector_rectangles:
+        cell_items = []
+        for item in sector_rectangle["rows"]:
+            impact = abs(item.get("nifty_impact") or 0)
+            fallback = math.sqrt(item.get("market_cap") or item.get("volume") or 1)
+            cell_items.append({
+                **item,
+                "raw_weight": impact if impact_available else fallback,
+            })
+
         cells = []
-        for item in items:
+        for item in _binary_treemap(
+            _with_minimum_layout_weights(cell_items, 0.038)
+        ):
             percent = item["percent"] or 0
             intensity = min(abs(percent) / 5, 1)
-            cell_weight = size_value(item) / total_weight * 100
+            area = item["width"] * item["height"]
+            if area >= 850:
+                size_class = "heat-xl"
+            elif area >= 420:
+                size_class = "heat-lg"
+            elif area >= 190:
+                size_class = "heat-md"
+            elif area >= 75:
+                size_class = "heat-sm"
+            else:
+                size_class = "heat-xs"
             cells.append(
                 {
                     **item,
                     "index_weight": item.get("index_weight"),
                     "nifty_impact": item.get("nifty_impact"),
-                    "weight": max(cell_weight, 5),
                     "intensity": round(0.28 + intensity * 0.62, 2),
+                    "size_class": size_class,
                 }
             )
-        group_impact = sum(abs(item.get("nifty_impact") or 0) for item in items)
         groups.append(
             {
-                "sector": sector,
+                "sector": sector_rectangle["sector"],
                 "cells": cells,
-                "impact": group_impact,
-                "market_cap": sum(item["market_cap"] or 0 for item in items),
+                "impact": sector_rectangle["impact"],
+                "market_cap": sector_rectangle["market_cap"],
+                "x": sector_rectangle["x"],
+                "y": sector_rectangle["y"],
+                "width": sector_rectangle["width"],
+                "height": sector_rectangle["height"],
             }
         )
-    total_group_size = sum(
-        group["impact"] if impact_available else 1
-        for group in groups
-    ) or 1
-    for group in groups:
-        group["width_percent"] = (
-            (group["impact"] if impact_available else 1)
-            / total_group_size
-            * 100
-        )
-    sort_key = "impact" if impact_available else "market_cap"
-    return sorted(groups, key=lambda group: group[sort_key], reverse=True)
+    return groups
+
+
+def build_stock_hover_data(rows):
+    return {
+        row["display_symbol"]: {
+            "symbol": row["display_symbol"],
+            "name": row.get("name", row["display_symbol"]),
+            "sector": row.get("sector", ""),
+            "price": row.get("price"),
+            "change": row.get("change"),
+            "percent": row.get("percent"),
+            "five_day_change": row.get("five_day_change"),
+            "volume": row.get("volume"),
+            "market_cap": row.get("market_cap"),
+            "signal": row.get("signal"),
+            "series": row.get("chart_series", []),
+        }
+        for row in rows
+    }
 
 
 def apply_nifty_impact(rows, snapshot):
@@ -604,7 +834,9 @@ def load_market_dashboard(stocks, allow_impact_fallback=False):
     rows = build_stock_rows(quotes, stock_history, stocks)
     impact_available = False
     try:
-        apply_nifty_impact(rows, fetch_nse_nifty50_snapshot())
+        nse_snapshot = fetch_nse_nifty50_snapshot()
+        apply_nse_quote_snapshot(rows, nse_snapshot)
+        apply_nifty_impact(rows, nse_snapshot)
         impact_available = any(row.get("nifty_impact") is not None for row in rows)
     except Exception:
         if not allow_impact_fallback:
@@ -630,6 +862,7 @@ def load_market_dashboard(stocks, allow_impact_fallback=False):
         "signals": sorted(rows, key=lambda row: abs(row["percent"] or 0), reverse=True)[:10],
         "sectors": build_sector_performance(rows),
         "heatmap": build_heatmap(rows),
+        "hover_data": build_stock_hover_data(rows),
         "impact_available": impact_available,
         "market_stats": build_market_stats(rows),
         "internals": build_market_internals(rows),
@@ -732,29 +965,10 @@ def fetch_company_calendar(stocks):
     return entries
 
 
-def next_trading_sessions(today, count=3):
-    sessions = []
-    candidate = today + timedelta(days=1)
-    while len(sessions) < count:
-        if candidate.weekday() < 5:
-            sessions.append(
-                {
-                    "date": candidate,
-                    "date_label": candidate.strftime("%b %d"),
-                    "time": "09:15",
-                    "type": "Market",
-                    "title": "NSE regular trading session",
-                    "detail": "Pre-open 09:00; regular market 09:15-15:30 IST",
-                }
-            )
-        candidate += timedelta(days=1)
-    return sessions
-
-
 def build_calendar_panels(entries, today=None):
     today = today or datetime.now(IST).date()
     earnings = []
-    events = next_trading_sessions(today)
+    events = []
     for entry in entries:
         for earnings_date in entry["earnings_dates"]:
             if earnings_date >= today:
@@ -830,6 +1044,11 @@ def option_chain_analysis():
     return redirect(PAGE_REDIRECTS["option-chain-analysis"], code=302)
 
 
+@app.route("/option-builder/")
+def option_builder():
+    return redirect(PAGE_REDIRECTS["option-builder"], code=302)
+
+
 @app.route("/market-performance/")
 def market_performance():
     return redirect(PAGE_REDIRECTS["market-performance"], code=302)
@@ -857,6 +1076,11 @@ def dashboard():
         fetch_headlines,
         cold_async=True,
     )
+    fii_dii, fii_dii_stale = get_cached_swr(
+        "fii_dii",
+        MARKET_CACHE_TTL,
+        fetch_fii_dii_activity,
+    )
     calendar_entries, calendar_stale = get_cached_swr(
         f"company_calendar:{universe_key}",
         CALENDAR_CACHE_TTL,
@@ -873,11 +1097,13 @@ def dashboard():
         "signals": [],
         "sectors": [],
         "heatmap": [],
+        "hover_data": {},
         "impact_available": False,
         "market_stats": build_market_stats([]),
         "internals": build_market_internals([]),
     }
     headlines = headlines or []
+    fii_dii = fii_dii or []
     calendar = build_calendar_panels(calendar_entries or [])
     earnings = enrich_earnings(calendar["earnings"], market["rows"])
     leading_index = next((card for card in market["indices"] if card.get("available")), None)
@@ -894,6 +1120,8 @@ def dashboard():
         headlines=headlines,
         market_stale=market_stale,
         news_stale=news_stale,
+        fii_dii=fii_dii,
+        fii_dii_stale=fii_dii_stale,
         calendar_stale=calendar_stale,
         constituents_stale=constituents_stale,
         nearby_events=calendar["events"],
@@ -901,6 +1129,7 @@ def dashboard():
         market_brief=brief,
         format_market_cap=format_market_cap,
         format_volume=format_volume,
+        format_crore_value=format_crore_value,
     )
 
 

@@ -15,12 +15,15 @@ from app import (
     build_calendar_panels,
     build_heatmap,
     apply_nifty_impact,
+    apply_nse_quote_snapshot,
     fetch_nse_nifty50_snapshot,
     fetch_nifty50_constituents,
+    format_crore_value,
     format_volume,
     get_cached,
     get_cached_swr,
     get_market_status,
+    normalize_fii_dii_activity,
 )
 
 
@@ -48,6 +51,7 @@ SAMPLE_MARKET = {
     "signals": [],
     "sectors": [],
     "heatmap": [],
+    "hover_data": {},
     "impact_available": False,
     "market_stats": {
         "tracked": 0, "priced": 0, "advance_ratio": 0,
@@ -112,9 +116,38 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(rows[2]["nifty_impact"], 0)
         heatmap = build_heatmap(rows)
         self.assertGreater(heatmap[0]["impact"], heatmap[1]["impact"])
-        self.assertGreater(heatmap[0]["width_percent"], heatmap[1]["width_percent"])
-        self.assertAlmostEqual(sum(group["width_percent"] for group in heatmap), 100)
-        self.assertGreater(heatmap[0]["cells"][0]["weight"], 5)
+        self.assertGreater(
+            heatmap[0]["width"] * heatmap[0]["height"],
+            heatmap[1]["width"] * heatmap[1]["height"],
+        )
+        self.assertAlmostEqual(
+            sum(group["width"] * group["height"] for group in heatmap),
+            10000,
+            places=1,
+        )
+        self.assertTrue(
+            all(cell["width"] > 0 and cell["height"] > 0 for group in heatmap for cell in group["cells"])
+        )
+
+    def test_nse_snapshot_hydrates_live_quote_fields(self):
+        rows = [{"display_symbol": "RELIANCE", "price": None, "change": None, "percent": None, "volume": None}]
+        apply_nse_quote_snapshot(
+            rows,
+            [{"symbol": "RELIANCE", "lastPrice": "1,450.5", "change": "12.3", "pChange": "0.85", "totalTradedVolume": "123456"}],
+        )
+        self.assertEqual(rows[0]["price"], 1450.5)
+        self.assertEqual(rows[0]["change"], 12.3)
+        self.assertEqual(rows[0]["percent"], 0.85)
+        self.assertEqual(rows[0]["volume"], 123456)
+
+    def test_fii_dii_activity_normalization(self):
+        rows = normalize_fii_dii_activity([
+            {"category": "DII", "date": "16-Jun-2026", "buyValue": "13,553.36", "sellValue": "13553.30", "netValue": "0.06"},
+            {"category": "FII/FPI", "date": "16-Jun-2026", "buyValue": "13887.15", "sellValue": "14636.33", "netValue": "-749.18"},
+        ])
+        self.assertEqual(rows[0]["category"], "DII")
+        self.assertEqual(rows[1]["category"], "FII/FPI")
+        self.assertEqual(format_crore_value(rows[1]["net"]), "Rs -749.18 Cr")
 
     @patch("app.requests.Session")
     def test_nse_snapshot_fetch_uses_session_and_returns_rows(self, session_class):
@@ -149,7 +182,7 @@ class DataModelTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(_CACHE["cold"]["data"], {"ready": True})
 
-    def test_calendar_panels_include_sessions_and_earnings(self):
+    def test_calendar_panels_include_corporate_events_without_routine_sessions(self):
         panels = build_calendar_panels(
             [{
                 "symbol": "TCS", "name": "Tata Consultancy Services",
@@ -160,7 +193,8 @@ class DataModelTests(unittest.TestCase):
         )
         self.assertEqual(panels["earnings"][0]["symbol"], "TCS")
         self.assertTrue(any(event["type"] == "Corporate" for event in panels["events"]))
-        self.assertTrue(any(event["type"] == "Market" for event in panels["events"]))
+        self.assertFalse(any(event["type"] == "Market" for event in panels["events"]))
+        self.assertFalse(any("regular trading session" in event["title"] for event in panels["events"]))
 
     @patch("app.requests.get")
     def test_official_constituent_feed_requires_fifty_stocks(self, get):
@@ -182,6 +216,7 @@ class RouteTests(unittest.TestCase):
         "SWP Calculator": "https://trading-simplified.com/swp-calculator/",
         "Retirement Stress Test": "https://retirement.trading-simplified.com/",
         "Option Chain Analysis": "https://trading-simplified.com/option-chain-analysis/",
+        "Option Builder": "https://trading-simplified.com/option-builder/",
         "Market Performance": "https://trading-simplified.com/market-performance/",
     }
 
@@ -201,10 +236,11 @@ class RouteTests(unittest.TestCase):
 
     def test_public_tool_paths_redirect_to_existing_services(self):
         destinations = {
-            "/blog/": "https://articles.trading-simplified.com/blog/",
-            "/swp-calculator/": "https://swp-nifty-v2.netlify.app/",
-            "/option-chain-analysis/": "https://articles.trading-simplified.com/option-chain-analysis/",
-            "/market-performance/": "https://market-performace-v1.streamlit.app/",
+            "/blog/": "https://trading-simplified.com/blog/",
+            "/swp-calculator/": "https://trading-simplified.com/swp-calculator/",
+            "/option-chain-analysis/": "https://trading-simplified.com/option-chain-analysis/",
+            "/option-builder/": "https://trading-simplified.com/option-builder/",
+            "/market-performance/": "https://trading-simplified.com/market-performance/",
         }
         for path, destination in destinations.items():
             response = self.client.get(path)
@@ -214,15 +250,18 @@ class RouteTests(unittest.TestCase):
     @patch("app.get_stock_universe", return_value=([], False))
     @patch("app.get_cached_swr")
     def test_dashboard_structure_and_search_routing(self, cached, universe):
-        cached.side_effect = [(SAMPLE_MARKET, False), ([], False), ([], False)]
+        cached.side_effect = [(SAMPLE_MARKET, False), ([], False), ([], False), ([], False)]
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn("NIFTY 50 Stocks - 1 Day Performance", html)
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260614-4", html)
+        self.assertIn("/static/css/style.css?v=20260617-1", html)
+        self.assertIn("/static/js/dashboard.js?v=20260617-1", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
+        self.assertIn("FII / DII Cash Activity", html)
+        self.assertIn('class="option-chain-promo" href="https://trading-simplified.com/option-chain-analysis/"', html)
         self.assertIn("Educational insights only", html)
         self.assertIn("Impact data unavailable", html)
         self.assertIn('action="/screener"', html)

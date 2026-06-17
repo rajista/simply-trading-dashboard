@@ -3,14 +3,14 @@
 {% block title %}Simply Trading - Indian Market Dashboard{% endblock %}
 
 {% block announcement %}
-<aside class="option-chain-promo" aria-label="AI Option Chain Analysis">
+<a class="option-chain-promo" href="https://trading-simplified.com/option-chain-analysis/" target="_blank" rel="noopener noreferrer" aria-label="Open AI Option Chain Analysis">
     <div>
         <strong>AI Option Chain Analysis</strong>
         <span>Explore AI-assisted strategy ideas based on market direction, volatility and option-chain signals.</span>
         <small>Educational insights only, not investment advice.</small>
     </div>
-    <a href="https://trading-simplified.com/option-chain-analysis/" target="_blank" rel="noopener noreferrer">Analyse Options</a>
-</aside>
+    <span class="option-chain-promo-cta">Analyse Options</span>
+</a>
 <div class="announcement">India Market Dashboard: NSE indices, breadth, movers and sector performance</div>
 {% endblock %}
 
@@ -66,17 +66,17 @@
         <div class="mover-column">
             <h2>Top Gainers</h2>
             <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
-            <tbody>{% for row in market.gainers %}<tr><td class="link">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="positive">{{ "%+.2f%%"|format(row.percent) }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
+            <tbody>{% for row in market.gainers %}<tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="positive">{{ "%+.2f%%"|format(row.percent) }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
         </div>
         <div class="mover-column">
             <h2>Top Losers</h2>
             <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
-            <tbody>{% for row in market.losers %}<tr><td class="link">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="negative">{{ "%+.2f%%"|format(row.percent) }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
+            <tbody>{% for row in market.losers %}<tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="negative">{{ "%+.2f%%"|format(row.percent) }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
         </div>
         <div class="mover-column">
             <h2>Most Active</h2>
             <table><thead><tr><th>Ticker</th><th>Last</th><th>Change</th><th>Volume</th></tr></thead>
-            <tbody>{% for row in market.active %}<tr><td class="link">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="{{ 'positive' if row.percent and row.percent > 0 else 'negative' if row.percent and row.percent < 0 }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
+            <tbody>{% for row in market.active %}<tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td><td class="{{ 'positive' if row.percent and row.percent > 0 else 'negative' if row.percent and row.percent < 0 }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</td><td>{{ format_volume(row.volume) }}</td></tr>{% endfor %}</tbody></table>
         </div>
     </div>
 
@@ -85,20 +85,21 @@
             {% if not market.impact_available %}<small>Impact data unavailable</small>
             {% elif constituents_stale %}<small>cached list</small>{% endif %}
         </h2>
+        <div class="heatmap-scroll">
         <div class="heatmap-groups">
         {% for group in market.heatmap %}
-            <section class="heatmap-sector" style="--sector-width: {{ group.width_percent }}%">
+            <section class="heatmap-sector" style="--x: {{ group.x }}%; --y: {{ group.y }}%; --w: {{ group.width }}%; --h: {{ group.height }}%">
                 <h3>{{ group.sector }}</h3>
                 <div class="heatmap-cells">
                 {% for cell in group.cells %}
-                    <div class="heat-cell {{ 'heat-positive' if (cell.percent or 0) >= 0 else 'heat-negative' }}" style="--cell-height: {{ cell.weight }}%; --intensity: {{ cell.intensity }}" title="{{ cell.display_symbol }}: {{ '%+.3f index %% contribution'|format(cell.nifty_impact) if cell.nifty_impact is not none else 'NIFTY impact unavailable' }}">
+                    <div class="heat-cell stock-ticker {{ cell.size_class }} {{ 'heat-positive' if (cell.percent or 0) >= 0 else 'heat-negative' }}" data-symbol="{{ cell.display_symbol }}" tabindex="0" style="--x: {{ cell.x }}%; --y: {{ cell.y }}%; --w: {{ cell.width }}%; --h: {{ cell.height }}%; --intensity: {{ cell.intensity }}" title="{{ cell.display_symbol }} {{ '%+.2f%%'|format(cell.percent) if cell.percent is not none else '' }}">
                         <strong>{{ cell.display_symbol }}</strong><span>{{ "%+.2f%%"|format(cell.percent) if cell.percent is not none else "-" }}</span>
-                        {% if cell.nifty_impact is not none and cell.weight >= 12 %}<small>{{ "%+.3f"|format(cell.nifty_impact) }} impact</small>{% endif %}
                     </div>
                 {% endfor %}
                 </div>
             </section>
         {% else %}<div class="unavailable">Heatmap data unavailable</div>{% endfor %}
+        </div>
         </div>
     </article>
 
@@ -106,7 +107,7 @@
         <h2>Technical Signals</h2>
         <div class="signal-columns">
         {% for row in market.signals %}
-            <div><span class="link">{{ row.display_symbol }}</span><b>{{ row.signal }}</b><em class="{{ 'positive' if row.percent and row.percent > 0 else 'negative' if row.percent and row.percent < 0 }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</em></div>
+            <div><span class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</span><b>{{ row.signal }}</b><em class="{{ 'positive' if row.percent and row.percent > 0 else 'negative' if row.percent and row.percent < 0 }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</em></div>
         {% endfor %}
         </div>
     </article>
@@ -121,8 +122,8 @@
                 <td>{{ sector.advancers }}</td>
                 <td class="{{ 'positive' if sector.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(sector.percent) }}</td>
                 <td>{{ format_volume(sector.volume) }}</td>
-                <td class="positive">{{ sector.leader.display_symbol }} {{ "%+.1f%%"|format(sector.leader.percent) if sector.leader.percent is not none else "" }}</td>
-                <td class="negative">{{ sector.laggard.display_symbol }} {{ "%+.1f%%"|format(sector.laggard.percent) if sector.laggard.percent is not none else "" }}</td>
+                <td class="positive"><span class="stock-ticker" data-symbol="{{ sector.leader.display_symbol }}" tabindex="0">{{ sector.leader.display_symbol }}</span> {{ "%+.1f%%"|format(sector.leader.percent) if sector.leader.percent is not none else "" }}</td>
+                <td class="negative"><span class="stock-ticker" data-symbol="{{ sector.laggard.display_symbol }}" tabindex="0">{{ sector.laggard.display_symbol }}</span> {{ "%+.1f%%"|format(sector.laggard.percent) if sector.laggard.percent is not none else "" }}</td>
             </tr>{% endfor %}</tbody>
         </table>
     </article>
@@ -141,7 +142,7 @@
         <table><thead><tr><th>Index</th><th>Last</th><th>Change</th></tr></thead>
         <tbody>{% for index in market.indices if index.available %}<tr><td class="link">{{ index.name }}</td><td>{{ "%.2f"|format(index.price) }}</td><td class="{{ 'positive' if index.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(index.percent) }}</td></tr>{% endfor %}</tbody></table>
         <h2 class="recent-title">Recent Quotes</h2>
-        <div class="recent-quotes">{% for row in market.rows[:6] %}<span class="link">{{ row.display_symbol }} <b class="{{ 'positive' if row.percent and row.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</b></span>{% endfor %}</div>
+        <div class="recent-quotes">{% for row in market.rows[:6] %}<span class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }} <b class="{{ 'positive' if row.percent and row.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(row.percent) if row.percent is not none else "-" }}</b></span>{% endfor %}</div>
         <h2 class="recent-title">NIFTY 50 Internals</h2>
         <div class="internal-grid">
             <div><span>Above SMA50</span><strong>{{ market.internals.above_sma50 }}/50</strong></div>
@@ -149,6 +150,25 @@
             <div><span>Near 52W High</span><strong>{{ market.internals.near_high }}</strong></div>
             <div><span>Volume Surge</span><strong>{{ market.internals.volume_surge }}</strong></div>
         </div>
+    </article>
+
+    <article class="fii-dii-panel panel">
+        <h2>FII / DII Cash Activity {% if fii_dii_stale %}<small>cached</small>{% endif %}</h2>
+        <table>
+            <thead><tr><th>Type</th><th>Buy</th><th>Sell</th><th>Net</th></tr></thead>
+            <tbody>
+            {% for flow in fii_dii %}
+                <tr>
+                    <td><strong>{{ flow.category }}</strong><small>{{ flow.date }}</small></td>
+                    <td>{{ format_crore_value(flow.buy) }}</td>
+                    <td>{{ format_crore_value(flow.sell) }}</td>
+                    <td class="{{ 'positive' if flow.net is not none and flow.net >= 0 else 'negative' }}">{{ format_crore_value(flow.net) }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4" class="unavailable">FII/DII data temporarily unavailable</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </article>
 
     <article class="events-panel panel">
@@ -172,7 +192,7 @@
             {% for item in earnings %}
                 <tr>
                     <td>{{ item.date_label }}</td>
-                    <td class="link" title="{{ item.name }}">{{ item.symbol }}</td>
+                    <td class="link stock-ticker" data-symbol="{{ item.symbol }}" tabindex="0" title="{{ item.name }}">{{ item.symbol }}</td>
                     <td>{{ item.trend }}</td>
                     <td class="{{ 'positive' if item.percent is not none and item.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(item.percent) if item.percent is not none else "-" }}</td>
                     <td class="{{ 'positive' if item.volume_change is not none and item.volume_change >= 0 else 'negative' }}">{{ "%+.1f%%"|format(item.volume_change) if item.volume_change is not none else "-" }}</td>
@@ -195,4 +215,23 @@
         </div>
     </article>
 </section>
+
+<script id="ticker-hover-data" type="application/json">{{ market.hover_data|tojson }}</script>
+<aside id="ticker-hover-card" class="ticker-hover-card" role="tooltip" aria-hidden="true">
+    <header>
+        <div><strong data-hover-symbol></strong><span data-hover-sector></span></div>
+        <b data-hover-change></b>
+    </header>
+    <svg viewBox="0 0 420 150" preserveAspectRatio="none" aria-hidden="true">
+        <g class="hover-grid"><line x1="0" y1="30" x2="420" y2="30"/><line x1="0" y1="75" x2="420" y2="75"/><line x1="0" y1="120" x2="420" y2="120"/></g>
+        <polyline data-hover-chart points=""></polyline>
+    </svg>
+    <div class="ticker-hover-meta">
+        <strong data-hover-name></strong>
+        <span data-hover-price></span>
+        <span data-hover-volume></span>
+        <span data-hover-signal></span>
+        <span data-hover-five-day></span>
+    </div>
+</aside>
 {% endblock %}
