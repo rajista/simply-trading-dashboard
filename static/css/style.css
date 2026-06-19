@@ -356,7 +356,7 @@ tbody tr:hover { background: #2a303d; }
     position: fixed;
     z-index: 1000;
     display: none;
-    width: min(480px, calc(100vw - 24px));
+    width: min(560px, calc(100vw - 24px));
     overflow: hidden;
     border: 1px solid #495166;
     border-radius: 5px;
@@ -391,6 +391,44 @@ tbody tr:hover { background: #2a303d; }
 }
 .ticker-hover-meta strong { grid-column: 1 / -1; color: #dfe2e9; }
 .ticker-hover-meta span { color: #aab1c1; }
+.ticker-hover-details {
+    display: grid;
+    gap: 7px;
+    padding: 0 12px 12px;
+    background: #202632;
+}
+.growth-grid, .fund-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid #303744;
+    background: #303744;
+}
+.fund-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.growth-grid span, .fund-grid span {
+    display: grid;
+    gap: 2px;
+    padding: 6px;
+    background: #1b202a;
+    color: var(--muted);
+    font-size: 9px;
+    text-transform: uppercase;
+}
+.growth-grid b, .fund-grid b {
+    overflow: hidden;
+    color: var(--text);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ticker-hover-details p {
+    max-height: 72px;
+    margin: 0;
+    overflow: auto;
+    color: #b9bfcb;
+    line-height: 1.35;
+}
 
 .signals { padding: 8px 10px; }
 .signals h2, .sector-panel h2, .headlines h2, .index-summary h2,
@@ -408,6 +446,38 @@ tbody tr:hover { background: #2a303d; }
 .sector-table { min-width: 720px; table-layout: auto; }
 .sector-table td:first-child { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .sector-table td:nth-last-child(-n + 2) { font-size: 10px; }
+.sector-toggle {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+}
+.sector-toggle::before {
+    content: "+";
+    display: inline-block;
+    width: 12px;
+    color: var(--muted);
+}
+.sector-toggle.is-open::before { content: "-"; }
+.sector-detail-row td {
+    padding: 0;
+    background: #181d27;
+}
+.sector-members {
+    max-height: 260px;
+    overflow: auto;
+    border-top: 1px solid #303744;
+    border-bottom: 1px solid #303744;
+}
+.sector-members table { min-width: 760px; }
+.sector-members th, .sector-members td { padding: 4px 6px; }
+.sector-members td:nth-child(2) {
+    max-width: 260px;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+}
 .headlines { padding: 8px 10px; }
 .headlines h2 small { color: #f6c85f; }
 .headlines ul { margin: 0; padding: 0; list-style: none; }

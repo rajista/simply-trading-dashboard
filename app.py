@@ -10,9 +10,10 @@ import os
 import re
 import threading
 import time as time_module
+from urllib.parse import quote
 import xml.etree.ElementTree as ET
 
-from flask import Flask, redirect, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request
 import pandas as pd
 import requests
 import yfinance as yf
@@ -33,6 +34,11 @@ NSE_NIFTY_50_API = (
     "equity-stock-indices?index=NIFTY%2050"
 )
 NSE_FII_DII_API = "https://www.nseindia.com/api/fiidiiTradeReact"
+NSE_INDEX_CARD_SYMBOLS = {
+    "^NSEI": "NIFTY 50",
+    "^NSEBANK": "NIFTY BANK",
+    "^CNXIT": "NIFTY IT",
+}
 INDEX_SYMBOLS = {
     "^NSEI": "NIFTY 50",
     "^BSESN": "SENSEX",
@@ -146,6 +152,77 @@ def fetch_nse_nifty50_snapshot():
     if not isinstance(rows, list):
         raise ValueError("NSE NIFTY 50 response has no data rows")
     return rows
+
+
+def parse_nse_index_card(symbol, index_name, payload):
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return None
+    normalized_name = index_name.upper().replace(" ", "")
+    aggregate = None
+    for item in rows:
+        item_symbol = str(item.get("symbol") or item.get("identifier") or "").upper().replace(" ", "")
+        if item_symbol == normalized_name:
+            aggregate = item
+            break
+    if aggregate is None and rows:
+        aggregate = rows[0]
+    if not aggregate:
+        return None
+    price = _parse_number(aggregate.get("lastPrice"))
+    change = _parse_number(aggregate.get("change"))
+    percent = _parse_number(aggregate.get("pChange"))
+    if price is None or change is None or percent is None:
+        return None
+    return {
+        "symbol": symbol,
+        "name": INDEX_SYMBOLS.get(symbol, index_name),
+        "available": True,
+        "price": price,
+        "change": change,
+        "percent": percent,
+        "date": datetime.now(IST).strftime("%b %d"),
+    }
+
+
+def fetch_nse_index_cards():
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": NSE_HOME_URL,
+    }
+    cards = {}
+    nifty50_rows = None
+    with requests.Session() as session:
+        session.headers.update(headers)
+        try:
+            session.get(NSE_HOME_URL, timeout=10)
+        except requests.RequestException:
+            pass
+        for symbol, index_name in NSE_INDEX_CARD_SYMBOLS.items():
+            url = (
+                "https://www.nseindia.com/api/equity-stock-indices?"
+                f"index={quote(index_name)}"
+            )
+            try:
+                response = session.get(url, timeout=12)
+                response.raise_for_status()
+                payload = response.json()
+            except (requests.RequestException, ValueError):
+                continue
+            card = parse_nse_index_card(symbol, index_name, payload)
+            if card:
+                cards[symbol] = card
+            if symbol == "^NSEI":
+                rows = payload.get("data") if isinstance(payload, dict) else None
+                if isinstance(rows, list):
+                    nifty50_rows = rows
+    return cards, nifty50_rows
 
 
 def fetch_fii_dii_activity():
@@ -465,10 +542,15 @@ def build_candles(frame, limit=32):
     return candles
 
 
-def build_index_cards(download):
+def build_index_cards(download, nse_cards=None):
+    nse_cards = nse_cards or {}
     cards = []
     for symbol, name in INDEX_SYMBOLS.items():
         frame = _ticker_frame(download, symbol)
+        candles = build_candles(frame) if not frame.empty else []
+        if symbol in nse_cards:
+            cards.append({**nse_cards[symbol], "candles": candles})
+            continue
         if frame.empty or "Close" not in frame:
             cards.append({"name": name, "symbol": symbol, "available": False})
             continue
@@ -490,7 +572,7 @@ def build_index_cards(download):
                 "change": change,
                 "percent": percent,
                 "date": closes.index[-1].strftime("%b %d"),
-                "candles": build_candles(frame),
+                "candles": candles,
             }
         )
     return cards
@@ -679,6 +761,16 @@ def build_sector_performance(rows):
     sectors = defaultdict(list)
     for row in rows:
         sectors[row["sector"]].append(row)
+    def member(row):
+        return {
+            "display_symbol": row["display_symbol"],
+            "name": row.get("name", row["display_symbol"]),
+            "price": row.get("price"),
+            "percent": row.get("percent"),
+            "volume": row.get("volume"),
+            "signal": row.get("signal"),
+        }
+
     return sorted(
         (
             {
@@ -694,6 +786,14 @@ def build_sector_performance(rows):
                 "volume": sum(row["volume"] or 0 for row in values),
                 "leader": max(values, key=lambda row: row["percent"] if row["percent"] is not None else -math.inf),
                 "laggard": min(values, key=lambda row: row["percent"] if row["percent"] is not None else math.inf),
+                "members": [
+                    member(row)
+                    for row in sorted(
+                        values,
+                        key=lambda row: row["percent"] if row["percent"] is not None else -math.inf,
+                        reverse=True,
+                    )
+                ],
             }
             for sector, values in sectors.items()
         ),
@@ -819,6 +919,55 @@ def build_stock_hover_data(rows):
     }
 
 
+def _growth_from_closes(closes, sessions):
+    if closes is None or len(closes) <= sessions:
+        return None
+    latest = float(closes.iloc[-1])
+    previous = float(closes.iloc[-sessions - 1])
+    return (latest - previous) / previous * 100 if previous else None
+
+
+def fetch_stock_detail(display_symbol):
+    clean_symbol = re.sub(r"[^A-Za-z0-9&.-]", "", display_symbol or "").upper()
+    if not clean_symbol:
+        raise ValueError("Missing stock symbol")
+    yf_symbol = clean_symbol if clean_symbol.endswith(".NS") else f"{clean_symbol}.NS"
+    ticker = yf.Ticker(yf_symbol)
+    info = ticker.info or {}
+    history = ticker.history(period="5y", interval="1d", auto_adjust=False)
+    closes = history["Close"].dropna() if history is not None and "Close" in history else pd.Series(dtype=float)
+    summary = _strip_html(info.get("longBusinessSummary") or "")
+    return {
+        "symbol": clean_symbol.removesuffix(".NS"),
+        "pe_ratio": _parse_number(info.get("trailingPE")) or _parse_number(info.get("forwardPE")),
+        "revenue": _parse_number(info.get("totalRevenue")),
+        "pat_margin": (
+            _parse_number(info.get("profitMargins")) * 100
+            if _parse_number(info.get("profitMargins")) is not None
+            else None
+        ),
+        "sector": info.get("sector") or "",
+        "industry": info.get("industry") or "",
+        "description": summary[:520],
+        "growth": {
+            "1m": _growth_from_closes(closes, 21),
+            "3m": _growth_from_closes(closes, 63),
+            "1y": _growth_from_closes(closes, 252),
+            "5y": _growth_from_closes(closes, min(1260, max(len(closes) - 2, 0))),
+        },
+    }
+
+
+def get_stock_detail(display_symbol):
+    key = f"stock_detail:{display_symbol.upper()}"
+    detail, _ = get_cached(
+        key,
+        86400,
+        lambda: fetch_stock_detail(display_symbol),
+    )
+    return detail or {}
+
+
 def apply_nifty_impact(rows, snapshot):
     ffmc_by_symbol = {}
     for item in snapshot:
@@ -875,6 +1024,12 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
     quotes, _ = get_market_quotes(stocks)
     quotes = quotes or {}
     index_history = fetch_index_history()
+    nse_index_cards = {}
+    nse_snapshot = None
+    try:
+        nse_index_cards, nse_snapshot = fetch_nse_index_cards()
+    except Exception:
+        nse_index_cards, nse_snapshot = {}, None
     stock_history = fetch_stock_history(all_stocks)
     all_rows = build_stock_rows(quotes, stock_history, all_stocks)
     rows_by_symbol = {row["symbol"]: row for row in all_rows}
@@ -882,7 +1037,7 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
     broad_rows = [rows_by_symbol[stock["symbol"]] for stock in broad_stocks if stock["symbol"] in rows_by_symbol]
     impact_available = False
     try:
-        nse_snapshot = fetch_nse_nifty50_snapshot()
+        nse_snapshot = nse_snapshot or fetch_nse_nifty50_snapshot()
         apply_nse_quote_snapshot(rows, nse_snapshot)
         apply_nifty_impact(rows, nse_snapshot)
         impact_available = any(row.get("nifty_impact") is not None for row in rows)
@@ -901,7 +1056,7 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
         reverse=True,
     )
     return {
-        "indices": build_index_cards(index_history),
+        "indices": build_index_cards(index_history, nse_index_cards),
         "rows": broad_rows,
         "nifty50_rows": rows,
         "breadth": build_breadth(broad_rows),
@@ -1076,6 +1231,11 @@ def common_context(active_page, show_header_search):
 @app.route("/health")
 def health():
     return {"status": "ok"}, 200
+
+
+@app.route("/api/stocks/<symbol>")
+def stock_detail_api(symbol):
+    return jsonify(get_stock_detail(symbol))
 
 
 @app.route("/blog/")

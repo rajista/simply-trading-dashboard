@@ -117,13 +117,34 @@
         <table class="sector-table">
             <thead><tr><th>Sector</th><th>Stocks</th><th>Adv.</th><th>Avg Change</th><th>Volume</th><th>Leader</th><th>Laggard</th></tr></thead>
             <tbody>{% for sector in market.sectors %}<tr>
-                <td class="link">{{ sector.name }}</td>
+                <td><button class="sector-toggle link" type="button" data-sector-target="sector-{{ loop.index }}">{{ sector.name }}</button></td>
                 <td>{{ sector.stocks }}</td>
                 <td>{{ sector.advancers }}</td>
                 <td class="{{ 'positive' if sector.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(sector.percent) }}</td>
                 <td>{{ format_volume(sector.volume) }}</td>
                 <td class="positive"><span class="stock-ticker" data-symbol="{{ sector.leader.display_symbol }}" tabindex="0">{{ sector.leader.display_symbol }}</span> {{ "%+.1f%%"|format(sector.leader.percent) if sector.leader.percent is not none else "" }}</td>
                 <td class="negative"><span class="stock-ticker" data-symbol="{{ sector.laggard.display_symbol }}" tabindex="0">{{ sector.laggard.display_symbol }}</span> {{ "%+.1f%%"|format(sector.laggard.percent) if sector.laggard.percent is not none else "" }}</td>
+            </tr>
+            <tr id="sector-{{ loop.index }}" class="sector-detail-row" hidden>
+                <td colspan="7">
+                    <div class="sector-members">
+                        <table>
+                            <thead><tr><th>Ticker</th><th>Company</th><th>Last</th><th>Change</th><th>Volume</th><th>Signal</th></tr></thead>
+                            <tbody>
+                            {% for stock in sector.members %}
+                                <tr>
+                                    <td class="link stock-ticker" data-symbol="{{ stock.display_symbol }}" tabindex="0">{{ stock.display_symbol }}</td>
+                                    <td>{{ stock.name }}</td>
+                                    <td>{{ "%.2f"|format(stock.price) if stock.price is not none else "-" }}</td>
+                                    <td class="{{ 'positive' if stock.percent is not none and stock.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.percent) if stock.percent is not none else "-" }}</td>
+                                    <td>{{ format_volume(stock.volume) }}</td>
+                                    <td>{{ stock.signal or "-" }}</td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </td>
             </tr>{% endfor %}</tbody>
         </table>
     </article>
@@ -232,6 +253,20 @@
         <span data-hover-volume></span>
         <span data-hover-signal></span>
         <span data-hover-five-day></span>
+    </div>
+    <div class="ticker-hover-details">
+        <div class="growth-grid">
+            <span>1M <b data-hover-growth-1m>-</b></span>
+            <span>3M <b data-hover-growth-3m>-</b></span>
+            <span>1Y <b data-hover-growth-1y>-</b></span>
+            <span>5Y <b data-hover-growth-5y>-</b></span>
+        </div>
+        <div class="fund-grid">
+            <span>P/E <b data-hover-pe>-</b></span>
+            <span>Revenue <b data-hover-revenue>-</b></span>
+            <span>PAT Margin <b data-hover-pat>-</b></span>
+        </div>
+        <p data-hover-description>Click a ticker to load company details.</p>
     </div>
 </aside>
 {% endblock %}

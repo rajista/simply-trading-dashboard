@@ -20,8 +20,17 @@
         volume: card.querySelector("[data-hover-volume]"),
         signal: card.querySelector("[data-hover-signal]"),
         fiveDay: card.querySelector("[data-hover-five-day]"),
+        growth1m: card.querySelector("[data-hover-growth-1m]"),
+        growth3m: card.querySelector("[data-hover-growth-3m]"),
+        growth1y: card.querySelector("[data-hover-growth-1y]"),
+        growth5y: card.querySelector("[data-hover-growth-5y]"),
+        pe: card.querySelector("[data-hover-pe]"),
+        revenue: card.querySelector("[data-hover-revenue]"),
+        pat: card.querySelector("[data-hover-pat]"),
+        description: card.querySelector("[data-hover-description]"),
     };
     let hideTimer;
+    const detailCache = {};
 
     const signed = (value, digits = 2) => {
         if (value === null || value === undefined) return "-";
@@ -29,6 +38,13 @@
     };
 
     const compactIndian = (value) => {
+        if (value === null || value === undefined) return "-";
+        if (value >= 10000000) return `${(value / 10000000).toFixed(2)} Cr`;
+        if (value >= 100000) return `${(value / 100000).toFixed(2)} L`;
+        return Number(value).toLocaleString("en-IN");
+    };
+
+    const formatRevenue = (value) => {
         if (value === null || value === undefined) return "-";
         if (value >= 10000000) return `${(value / 10000000).toFixed(2)} Cr`;
         if (value >= 100000) return `${(value / 100000).toFixed(2)} L`;
@@ -76,11 +92,49 @@
         fields.volume.textContent = `Volume: ${compactIndian(item.volume)}`;
         fields.signal.textContent = `Signal: ${item.signal || "Unavailable"}`;
         fields.fiveDay.textContent = `5 day: ${signed(item.five_day_change)}%`;
+        fields.growth1m.textContent = "-";
+        fields.growth3m.textContent = "-";
+        fields.growth1y.textContent = "-";
+        fields.growth5y.textContent = "-";
+        fields.pe.textContent = "-";
+        fields.revenue.textContent = "-";
+        fields.pat.textContent = "-";
+        fields.description.textContent = "Loading company details...";
         chart.setAttribute("points", chartPoints(item.series));
         card.classList.toggle("is-negative", !positive);
         card.classList.add("is-visible");
         card.setAttribute("aria-hidden", "false");
         requestAnimationFrame(() => placeCard(target));
+        loadDetails(item.symbol);
+    };
+
+    const applyDetails = (symbol, detail) => {
+        if (!card.classList.contains("is-visible") || fields.symbol.textContent !== symbol) return;
+        const growth = detail.growth || {};
+        fields.growth1m.textContent = `${signed(growth["1m"])}%`;
+        fields.growth3m.textContent = `${signed(growth["3m"])}%`;
+        fields.growth1y.textContent = `${signed(growth["1y"])}%`;
+        fields.growth5y.textContent = `${signed(growth["5y"])}%`;
+        fields.pe.textContent = detail.pe_ratio === null || detail.pe_ratio === undefined ? "-" : Number(detail.pe_ratio).toFixed(2);
+        fields.revenue.textContent = formatRevenue(detail.revenue);
+        fields.pat.textContent = detail.pat_margin === null || detail.pat_margin === undefined ? "-" : `${Number(detail.pat_margin).toFixed(2)}%`;
+        fields.description.textContent = detail.description || "Business description unavailable.";
+    };
+
+    const loadDetails = async (symbol) => {
+        if (detailCache[symbol]) {
+            applyDetails(symbol, detailCache[symbol]);
+            return;
+        }
+        try {
+            const response = await fetch(`/api/stocks/${encodeURIComponent(symbol)}`);
+            if (!response.ok) throw new Error("detail request failed");
+            const detail = await response.json();
+            detailCache[symbol] = detail;
+            applyDetails(symbol, detail);
+        } catch {
+            fields.description.textContent = "Company details temporarily unavailable.";
+        }
     };
 
     const hide = () => {
@@ -108,5 +162,15 @@
     });
     document.addEventListener("focusout", (event) => {
         if (event.target.closest(".stock-ticker[data-symbol]")) hide();
+    });
+
+    document.addEventListener("click", (event) => {
+        const toggle = event.target.closest(".sector-toggle[data-sector-target]");
+        if (!toggle) return;
+        const row = document.getElementById(toggle.dataset.sectorTarget);
+        if (!row) return;
+        const isOpen = !row.hidden;
+        row.hidden = isOpen;
+        toggle.classList.toggle("is-open", !isOpen);
     });
 })();

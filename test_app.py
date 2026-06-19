@@ -14,6 +14,7 @@ from app import (
     build_candles,
     build_calendar_panels,
     build_heatmap,
+    build_sector_performance,
     apply_nifty_impact,
     apply_nse_quote_snapshot,
     fetch_nse_nifty50_snapshot,
@@ -25,6 +26,7 @@ from app import (
     get_cached_swr,
     get_market_status,
     normalize_fii_dii_activity,
+    parse_nse_index_card,
 )
 
 
@@ -51,7 +53,23 @@ SAMPLE_MARKET = {
     "losers": [],
     "active": [],
     "signals": [],
-    "sectors": [],
+    "sectors": [{
+        "name": "Technology",
+        "stocks": 1,
+        "advancers": 1,
+        "percent": 1.0,
+        "volume": 100_000,
+        "leader": {"display_symbol": "TCS", "percent": 1.0},
+        "laggard": {"display_symbol": "TCS", "percent": 1.0},
+        "members": [{
+            "display_symbol": "TCS",
+            "name": "Tata Consultancy Services",
+            "price": 3200.0,
+            "percent": 1.0,
+            "volume": 100_000,
+            "signal": "Uptrend",
+        }],
+    }],
     "heatmap": [],
     "hover_data": {},
     "impact_available": False,
@@ -142,6 +160,16 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(rows[0]["percent"], 0.85)
         self.assertEqual(rows[0]["volume"], 123456)
 
+    def test_nse_index_card_parser_uses_ltp_change_and_previous_close_basis(self):
+        card = parse_nse_index_card(
+            "^NSEI",
+            "NIFTY 50",
+            {"data": [{"symbol": "NIFTY 50", "lastPrice": "24013.10", "change": "-154.90", "pChange": "-0.64"}]},
+        )
+        self.assertEqual(card["price"], 24013.10)
+        self.assertEqual(card["change"], -154.90)
+        self.assertEqual(card["percent"], -0.64)
+
     def test_fii_dii_activity_normalization(self):
         rows = normalize_fii_dii_activity([
             {"category": "DII", "date": "16-Jun-2026", "buyValue": "13,553.36", "sellValue": "13553.30", "netValue": "0.06"},
@@ -150,6 +178,16 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(rows[0]["category"], "DII")
         self.assertEqual(rows[1]["category"], "FII/FPI")
         self.assertEqual(format_crore_value(rows[1]["net"]), "Rs -749.18 Cr")
+
+    def test_sector_performance_includes_expandable_members(self):
+        rows = [
+            {"sector": "Tech", "display_symbol": "AAA", "name": "AAA Ltd", "price": 10, "percent": 2, "volume": 100, "signal": "Uptrend"},
+            {"sector": "Tech", "display_symbol": "BBB", "name": "BBB Ltd", "price": 20, "percent": -1, "volume": 200, "signal": "Downtrend"},
+        ]
+        sectors = build_sector_performance(rows)
+        self.assertEqual(sectors[0]["stocks"], 2)
+        self.assertEqual(len(sectors[0]["members"]), 2)
+        self.assertEqual(sectors[0]["members"][0]["display_symbol"], "AAA")
 
     @patch("app.requests.Session")
     def test_nse_snapshot_fetch_uses_session_and_returns_rows(self, session_class):
@@ -272,12 +310,13 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260617-1", html)
-        self.assertIn("/static/js/dashboard.js?v=20260617-1", html)
+        self.assertIn("/static/css/style.css?v=20260619-1", html)
+        self.assertIn("/static/js/dashboard.js?v=20260619-1", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
         self.assertIn("NIFTY 500", html)
+        self.assertIn("sector-toggle", html)
         self.assertIn('class="option-chain-promo" href="https://trading-simplified.com/option-chain-analysis/"', html)
         self.assertIn("Educational insights only", html)
         self.assertIn("Impact data unavailable", html)
@@ -306,6 +345,13 @@ class RouteTests(unittest.TestCase):
     def test_empty_screener(self, quotes, universe):
         html = self.client.get("/screener?search=missing").get_data(as_text=True)
         self.assertIn("No stocks found", html)
+
+    @patch("app.get_stock_detail")
+    def test_stock_detail_api(self, detail):
+        detail.return_value = {"symbol": "TCS", "growth": {"1m": 1.2}, "pe_ratio": 30}
+        response = self.client.get("/api/stocks/TCS")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["symbol"], "TCS")
 
 
 if __name__ == "__main__":
