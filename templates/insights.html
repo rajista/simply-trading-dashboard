@@ -1,0 +1,120 @@
+{% extends "layout.html" %}
+
+{% block title %}Simply Trading - Market Insights{% endblock %}
+
+{% block content %}
+<section class="market-brief panel">
+    <span class="brief-time">Today</span>
+    <strong>Market Insights: accumulation, trend and 52-week positioning across the tracked universe.</strong>
+    {% if market_stale %}<span class="stale-label">cached market data</span>{% endif %}
+    {% if constituents_stale %}<span class="stale-label">cached constituents</span>{% endif %}
+</section>
+
+<section class="insight-stats stats-grid panel">
+    <div><span>Accumulation score 2-3</span><strong>{{ insights.accumulation_count }}</strong></div>
+    <div><span>Uptrend signals</span><strong class="positive">{{ insights.uptrend_count }}</strong></div>
+    <div><span>Near 52W highs</span><strong>{{ insights.near_high_count }}</strong></div>
+    <div><span>Stocks tracked</span><strong>{{ market.market_stats.tracked }}</strong></div>
+    <div><span>Average move</span><strong class="{{ 'positive' if market.market_stats.average_change and market.market_stats.average_change >= 0 else 'negative' }}">{{ "%+.2f%%"|format(market.market_stats.average_change) if market.market_stats.average_change is not none else "-" }}</strong></div>
+    <div><span>Total volume</span><strong>{{ format_volume(market.market_stats.total_volume) }}</strong></div>
+</section>
+
+<section class="insights-grid">
+    <article class="panel insights-table">
+        <h2>Accumulation Watch</h2>
+        <div class="table-scroll insight-table-scroll">
+            <table>
+                <thead><tr><th>Symbol</th><th>Sector</th><th>Price</th><th>5D %</th><th>Score</th><th>Signals</th></tr></thead>
+                <tbody>
+                {% for row in insights.ranked %}
+                    <tr>
+                        <td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
+                        <td>{{ row.sector }}</td>
+                        <td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td>
+                        <td class="{{ 'positive' if row.five_day_change and row.five_day_change >= 0 else 'negative' if row.five_day_change and row.five_day_change < 0 }}">{{ "%+.2f%%"|format(row.five_day_change) if row.five_day_change is not none else "-" }}</td>
+                        <td><strong>{{ row.accumulation_score }}/3</strong></td>
+                        <td class="signal-tags">
+                            {% if row.obv_divergence %}<span>OBV</span>{% endif %}
+                            {% if row.quiet_pullback %}<span>Pullback</span>{% endif %}
+                            {% if row.volume_range_signal %}<span>Range</span>{% endif %}
+                            {% if not row.obv_divergence and not row.quiet_pullback and not row.volume_range_signal %}<em>-</em>{% endif %}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="6" class="unavailable">Market rows are still loading. Refresh shortly.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+
+    <article class="panel sector-bars">
+        <h2>Accumulation By Sector</h2>
+        {% for sector in insights.sectors %}
+            <div class="sector-bar-row">
+                <div><strong>{{ sector.sector }}</strong><span>{{ sector.accumulation }}/{{ sector.total }}</span></div>
+                <b><i style="width: {{ sector.width }}%"></i></b>
+            </div>
+        {% else %}
+            <div class="unavailable">Sector insight unavailable</div>
+        {% endfor %}
+    </article>
+
+    <article class="panel insight-lines">
+        <h2>Generated Notes</h2>
+        {% for line in insights.top_lines %}
+            <p>{{ line }}</p>
+        {% endfor %}
+    </article>
+</section>
+
+<script id="ticker-hover-data" type="application/json">{{ market.hover_data|tojson }}</script>
+<aside id="ticker-hover-card" class="ticker-hover-card" role="tooltip" aria-hidden="true">
+    <header>
+        <div><strong data-hover-symbol></strong><span data-hover-sector></span></div>
+        <b data-hover-change></b>
+        <button type="button" class="ticker-hover-close" data-hover-close aria-label="Close stock details">&times;</button>
+    </header>
+    <div class="ticker-hover-body">
+        <svg viewBox="0 0 420 150" preserveAspectRatio="none" aria-hidden="true">
+            <g class="hover-grid"><line x1="0" y1="30" x2="420" y2="30"/><line x1="0" y1="75" x2="420" y2="75"/><line x1="0" y1="120" x2="420" y2="120"/></g>
+            <polyline data-hover-chart points=""></polyline>
+        </svg>
+        <div class="ticker-hover-meta">
+            <strong data-hover-name></strong>
+            <span data-hover-price></span>
+            <span data-hover-volume></span>
+            <span data-hover-signal></span>
+            <span data-hover-five-day></span>
+        </div>
+        <div class="ticker-hover-details">
+            <div class="accumulation-box">
+                <span>Accumulation <b data-hover-accumulation-score>-</b></span>
+                <i data-hover-obv>OBV</i>
+                <i data-hover-pullback>Pullback</i>
+                <i data-hover-volume-range>Range</i>
+            </div>
+            <div class="range-grid">
+                <span>Open <b data-hover-day-open>-</b></span>
+                <span>High <b data-hover-day-high>-</b></span>
+                <span>Low <b data-hover-day-low>-</b></span>
+                <span>52W High Dist. <b data-hover-distance-high>-</b></span>
+                <span>52W Low Dist. <b data-hover-distance-low>-</b></span>
+                <span>Market Cap <b data-hover-market-cap>-</b></span>
+            </div>
+            <div class="growth-grid">
+                <span>1M <b data-hover-growth-1m>-</b></span>
+                <span>3M <b data-hover-growth-3m>-</b></span>
+                <span>1Y <b data-hover-growth-1y>-</b></span>
+                <span>5Y <b data-hover-growth-5y>-</b></span>
+            </div>
+            <div class="fund-grid">
+                <span>P/E <b data-hover-pe>-</b></span>
+                <span>Revenue <b data-hover-revenue>-</b></span>
+                <span>PAT Margin <b data-hover-pat>-</b></span>
+            </div>
+            <p data-hover-description>Click a ticker to load company details.</p>
+        </div>
+    </div>
+</aside>
+{% endblock %}

@@ -578,6 +578,83 @@ def build_index_cards(download, nse_cards=None):
     return cards
 
 
+def _aligned_close_volume(closes, volumes):
+    try:
+        data = pd.concat(
+            [
+                pd.to_numeric(closes, errors="coerce").rename("close"),
+                pd.to_numeric(volumes, errors="coerce").rename("volume"),
+            ],
+            axis=1,
+        ).dropna()
+    except Exception:
+        return pd.DataFrame(columns=["close", "volume"])
+    return data[data["volume"] > 0]
+
+
+def compute_obv_divergence(closes, volumes):
+    """Return True when volume accumulates while price is mostly flat."""
+    data = _aligned_close_volume(closes, volumes)
+    if len(data) < 16:
+        return False
+    try:
+        direction = data["close"].diff().fillna(0).apply(lambda value: 1 if value > 0 else -1 if value < 0 else 0)
+        obv = (direction * data["volume"]).cumsum()
+        window = 15 if len(data) >= 20 else 10
+        price_start = float(data["close"].iloc[-window])
+        if not price_start:
+            return False
+        price_change = (float(data["close"].iloc[-1]) - price_start) / price_start * 100
+        obv_window = obv.tail(window)
+        obv_trending_up = float(obv_window.iloc[-1]) > float(obv_window.iloc[0])
+        return obv_trending_up and abs(price_change) < 3
+    except Exception:
+        return False
+
+
+def compute_quiet_pullback(closes, volumes):
+    """Return True for a recent spike followed by quiet flat/down sessions."""
+    data = _aligned_close_volume(closes, volumes)
+    if len(data) < 24:
+        return False
+    try:
+        for spike_pos in range(max(20, len(data) - 8), len(data) - 1):
+            prior_avg = float(data["volume"].iloc[spike_pos - 20:spike_pos].mean())
+            if prior_avg <= 0 or float(data["volume"].iloc[spike_pos]) <= prior_avg * 1.5:
+                continue
+            follow = data.iloc[spike_pos + 1:min(spike_pos + 4, len(data))]
+            if follow.empty:
+                continue
+            below_avg_volume = all(float(value) < prior_avg for value in follow["volume"])
+            quiet_closes = all(
+                float(follow["close"].iloc[index]) <= float(data["close"].iloc[spike_pos + index]) * 1.005
+                for index in range(len(follow))
+            )
+            if below_avg_volume and quiet_closes:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def compute_volume_range_signal(closes, volumes):
+    data = _aligned_close_volume(closes, volumes)
+    if len(data) < 20:
+        return False
+    try:
+        avg5 = float(data["volume"].tail(5).mean())
+        avg20 = float(data["volume"].tail(20).mean())
+        if avg20 <= 0 or avg5 / avg20 <= 1.1:
+            return False
+        current = data["close"].tail(10)
+        previous = data["close"].iloc[-20:-10]
+        current_range = float(current.max() - current.min())
+        previous_range = float(previous.max() - previous.min())
+        return previous_range > 0 and current_range < previous_range
+    except Exception:
+        return False
+
+
 def build_stock_rows(quotes, history, stocks):
     rows = []
     for stock in stocks:
@@ -600,6 +677,9 @@ def build_stock_rows(quotes, history, stocks):
         high52 = float(closes.max()) if not closes.empty else None
         low52 = float(closes.min()) if not closes.empty else None
         volumes = frame["Volume"].dropna() if not frame.empty and "Volume" in frame else pd.Series(dtype=float)
+        day_open = float(frame["Open"].dropna().iloc[-1]) if not frame.empty and "Open" in frame and not frame["Open"].dropna().empty else None
+        day_high = float(frame["High"].dropna().iloc[-1]) if not frame.empty and "High" in frame and not frame["High"].dropna().empty else None
+        day_low = float(frame["Low"].dropna().iloc[-1]) if not frame.empty and "Low" in frame and not frame["Low"].dropna().empty else None
         current_volume = quote.get("volume")
         if current_volume is None and not volumes.empty:
             current_volume = float(volumes.iloc[-1])
@@ -624,6 +704,10 @@ def build_stock_rows(quotes, history, stocks):
                 signal = "Above SMA50"
             else:
                 signal = "Below SMA50"
+        obv_divergence = compute_obv_divergence(closes, volumes)
+        quiet_pullback = compute_quiet_pullback(closes, volumes)
+        volume_range_signal = compute_volume_range_signal(closes, volumes)
+        accumulation_score = sum([obv_divergence, quiet_pullback, volume_range_signal])
         rows.append(
             {
                 **stock,
@@ -634,6 +718,19 @@ def build_stock_rows(quotes, history, stocks):
                 "volume": current_volume,
                 "volume_change": volume_change,
                 "five_day_change": five_day_change,
+                "day_open": day_open,
+                "day_high": day_high,
+                "day_low": day_low,
+                "high52_distance": (
+                    (current - high52) / high52 * 100
+                    if current is not None and high52
+                    else None
+                ),
+                "low52_distance": (
+                    (current - low52) / low52 * 100
+                    if current is not None and low52
+                    else None
+                ),
                 "chart_series": [
                     round(float(value), 2)
                     for value in closes.tail(90).tolist()
@@ -645,6 +742,10 @@ def build_stock_rows(quotes, history, stocks):
                 "high52": high52,
                 "low52": low52,
                 "signal": signal,
+                "obv_divergence": obv_divergence,
+                "quiet_pullback": quiet_pullback,
+                "volume_range_signal": volume_range_signal,
+                "accumulation_score": accumulation_score,
             }
         )
     return rows
@@ -914,8 +1015,69 @@ def build_stock_hover_data(rows):
             "market_cap": row.get("market_cap"),
             "signal": row.get("signal"),
             "series": row.get("chart_series", []),
+            "day_open": row.get("day_open"),
+            "day_high": row.get("day_high"),
+            "day_low": row.get("day_low"),
+            "high52_distance": row.get("high52_distance"),
+            "low52_distance": row.get("low52_distance"),
+            "accumulation_score": row.get("accumulation_score", 0),
+            "obv_divergence": row.get("obv_divergence", False),
+            "quiet_pullback": row.get("quiet_pullback", False),
+            "volume_range_signal": row.get("volume_range_signal", False),
         }
         for row in rows
+    }
+
+
+def build_insights(rows):
+    rows = rows or []
+    accumulation_rows = [row for row in rows if (row.get("accumulation_score") or 0) >= 2]
+    uptrend_rows = [row for row in rows if row.get("signal") == "Uptrend"]
+    near_high_rows = [
+        row for row in rows
+        if row.get("price") is not None and row.get("high52") and row["price"] >= row["high52"] * 0.95
+    ]
+    ranked = sorted(
+        rows,
+        key=lambda row: (
+            row.get("accumulation_score") or 0,
+            row.get("five_day_change") if row.get("five_day_change") is not None else -999,
+        ),
+        reverse=True,
+    )[:15]
+    sector_totals = defaultdict(lambda: {"sector": "", "total": 0, "accumulation": 0})
+    for row in rows:
+        sector = row.get("sector") or "Other"
+        sector_totals[sector]["sector"] = sector
+        sector_totals[sector]["total"] += 1
+        if (row.get("accumulation_score") or 0) >= 2:
+            sector_totals[sector]["accumulation"] += 1
+    sectors = sorted(
+        sector_totals.values(),
+        key=lambda item: (item["accumulation"], item["total"]),
+        reverse=True,
+    )
+    max_count = max([item["accumulation"] for item in sectors] or [1])
+    for item in sectors:
+        item["width"] = (item["accumulation"] / max_count * 100) if max_count else 0
+        item["ratio"] = item["accumulation"] / item["total"] * 100 if item["total"] else 0
+    top_lines = [
+        (
+            f"{item['accumulation']} of {item['total']} {item['sector']} stocks are showing "
+            "accumulation signals today."
+        )
+        for item in sectors[:3]
+        if item["accumulation"] > 0
+    ]
+    if not top_lines:
+        top_lines = ["No sector has a broad accumulation cluster in the current cached market data."]
+    return {
+        "accumulation_count": len(accumulation_rows),
+        "uptrend_count": len(uptrend_rows),
+        "near_high_count": len(near_high_rows),
+        "ranked": ranked,
+        "sectors": sectors,
+        "top_lines": top_lines,
     }
 
 
@@ -1238,6 +1400,53 @@ def stock_detail_api(symbol):
     return jsonify(get_stock_detail(symbol))
 
 
+def empty_market_dashboard():
+    return {
+        "indices": [],
+        "rows": [],
+        "nifty50_rows": [],
+        "breadth": [],
+        "gainers": [],
+        "losers": [],
+        "active": [],
+        "signals": [],
+        "sectors": [],
+        "heatmap": [],
+        "hover_data": {},
+        "impact_available": False,
+        "market_stats": build_market_stats([]),
+        "internals": build_market_internals([]),
+    }
+
+
+def load_cached_market_context():
+    stocks, constituents_stale = get_stock_universe()
+    broad_stocks, broad_constituents_stale = get_nifty500_universe()
+    universe_key = ",".join(stock["symbol"] for stock in stocks)
+    broad_universe_key = ",".join(stock["symbol"] for stock in broad_stocks)
+    market_key = f"market:{universe_key}|broad:{broad_universe_key}"
+    with _CACHE_LOCK:
+        has_cached_market = market_key in _CACHE
+    market, market_stale = get_cached_swr(
+        market_key,
+        MARKET_CACHE_TTL,
+        lambda: load_market_dashboard(
+            stocks,
+            broad_stocks,
+            allow_impact_fallback=not has_cached_market,
+        ),
+        cold_async=True,
+    )
+    return {
+        "stocks": stocks,
+        "broad_stocks": broad_stocks,
+        "universe_key": universe_key,
+        "market": market or empty_market_dashboard(),
+        "market_stale": market_stale,
+        "constituents_stale": constituents_stale or broad_constituents_stale,
+    }
+
+
 @app.route("/blog/")
 def articles():
     return redirect(PAGE_REDIRECTS["articles"], code=302)
@@ -1265,23 +1474,12 @@ def market_performance():
 
 @app.route("/")
 def dashboard():
-    stocks, constituents_stale = get_stock_universe()
-    broad_stocks, broad_constituents_stale = get_nifty500_universe()
-    universe_key = ",".join(stock["symbol"] for stock in stocks)
-    broad_universe_key = ",".join(stock["symbol"] for stock in broad_stocks)
-    market_key = f"market:{universe_key}|broad:{broad_universe_key}"
-    with _CACHE_LOCK:
-        has_cached_market = market_key in _CACHE
-    market, market_stale = get_cached_swr(
-        market_key,
-        MARKET_CACHE_TTL,
-        lambda: load_market_dashboard(
-            stocks,
-            broad_stocks,
-            allow_impact_fallback=not has_cached_market,
-        ),
-        cold_async=True,
-    )
+    market_context = load_cached_market_context()
+    stocks = market_context["stocks"]
+    broad_stocks = market_context["broad_stocks"]
+    universe_key = market_context["universe_key"]
+    market = market_context["market"]
+    market_stale = market_context["market_stale"]
     headlines, news_stale = get_cached_swr(
         "news",
         NEWS_CACHE_TTL,
@@ -1299,22 +1497,6 @@ def dashboard():
         lambda: fetch_company_calendar(stocks),
         cold_async=True,
     )
-    market = market or {
-        "indices": [],
-        "rows": [],
-        "nifty50_rows": [],
-        "breadth": [],
-        "gainers": [],
-        "losers": [],
-        "active": [],
-        "signals": [],
-        "sectors": [],
-        "heatmap": [],
-        "hover_data": {},
-        "impact_available": False,
-        "market_stats": build_market_stats([]),
-        "internals": build_market_internals([]),
-    }
     headlines = headlines or []
     fii_dii = fii_dii or []
     calendar = build_calendar_panels(calendar_entries or [])
@@ -1336,7 +1518,7 @@ def dashboard():
         fii_dii=fii_dii,
         fii_dii_stale=fii_dii_stale,
         calendar_stale=calendar_stale,
-        constituents_stale=constituents_stale or broad_constituents_stale,
+        constituents_stale=market_context["constituents_stale"],
         broad_universe_count=len(broad_stocks),
         nearby_events=calendar["events"],
         earnings=earnings,
@@ -1344,6 +1526,23 @@ def dashboard():
         format_market_cap=format_market_cap,
         format_volume=format_volume,
         format_crore_value=format_crore_value,
+    )
+
+
+@app.route("/insights")
+def insights():
+    market_context = load_cached_market_context()
+    market = market_context["market"]
+    insight_data = build_insights(market["rows"])
+    return render_template(
+        "insights.html",
+        **common_context("insights", False),
+        market=market,
+        insights=insight_data,
+        market_stale=market_context["market_stale"],
+        constituents_stale=market_context["constituents_stale"],
+        format_market_cap=format_market_cap,
+        format_volume=format_volume,
     )
 
 

@@ -242,31 +242,48 @@
     <header>
         <div><strong data-hover-symbol></strong><span data-hover-sector></span></div>
         <b data-hover-change></b>
+        <button type="button" class="ticker-hover-close" data-hover-close aria-label="Close stock details">&times;</button>
     </header>
-    <svg viewBox="0 0 420 150" preserveAspectRatio="none" aria-hidden="true">
-        <g class="hover-grid"><line x1="0" y1="30" x2="420" y2="30"/><line x1="0" y1="75" x2="420" y2="75"/><line x1="0" y1="120" x2="420" y2="120"/></g>
-        <polyline data-hover-chart points=""></polyline>
-    </svg>
-    <div class="ticker-hover-meta">
-        <strong data-hover-name></strong>
-        <span data-hover-price></span>
-        <span data-hover-volume></span>
-        <span data-hover-signal></span>
-        <span data-hover-five-day></span>
-    </div>
-    <div class="ticker-hover-details">
-        <div class="growth-grid">
-            <span>1M <b data-hover-growth-1m>-</b></span>
-            <span>3M <b data-hover-growth-3m>-</b></span>
-            <span>1Y <b data-hover-growth-1y>-</b></span>
-            <span>5Y <b data-hover-growth-5y>-</b></span>
+    <div class="ticker-hover-body">
+        <svg viewBox="0 0 420 150" preserveAspectRatio="none" aria-hidden="true">
+            <g class="hover-grid"><line x1="0" y1="30" x2="420" y2="30"/><line x1="0" y1="75" x2="420" y2="75"/><line x1="0" y1="120" x2="420" y2="120"/></g>
+            <polyline data-hover-chart points=""></polyline>
+        </svg>
+        <div class="ticker-hover-meta">
+            <strong data-hover-name></strong>
+            <span data-hover-price></span>
+            <span data-hover-volume></span>
+            <span data-hover-signal></span>
+            <span data-hover-five-day></span>
         </div>
-        <div class="fund-grid">
-            <span>P/E <b data-hover-pe>-</b></span>
-            <span>Revenue <b data-hover-revenue>-</b></span>
-            <span>PAT Margin <b data-hover-pat>-</b></span>
+        <div class="ticker-hover-details">
+            <div class="accumulation-box">
+                <span>Accumulation <b data-hover-accumulation-score>-</b></span>
+                <i data-hover-obv>OBV</i>
+                <i data-hover-pullback>Pullback</i>
+                <i data-hover-volume-range>Range</i>
+            </div>
+            <div class="range-grid">
+                <span>Open <b data-hover-day-open>-</b></span>
+                <span>High <b data-hover-day-high>-</b></span>
+                <span>Low <b data-hover-day-low>-</b></span>
+                <span>52W High Dist. <b data-hover-distance-high>-</b></span>
+                <span>52W Low Dist. <b data-hover-distance-low>-</b></span>
+                <span>Market Cap <b data-hover-market-cap>-</b></span>
+            </div>
+            <div class="growth-grid">
+                <span>1M <b data-hover-growth-1m>-</b></span>
+                <span>3M <b data-hover-growth-3m>-</b></span>
+                <span>1Y <b data-hover-growth-1y>-</b></span>
+                <span>5Y <b data-hover-growth-5y>-</b></span>
+            </div>
+            <div class="fund-grid">
+                <span>P/E <b data-hover-pe>-</b></span>
+                <span>Revenue <b data-hover-revenue>-</b></span>
+                <span>PAT Margin <b data-hover-pat>-</b></span>
+            </div>
+            <p data-hover-description>Click a ticker to load company details.</p>
         </div>
-        <p data-hover-description>Click a ticker to load company details.</p>
     </div>
 </aside>
 {% endblock %}

@@ -20,6 +20,16 @@
         volume: card.querySelector("[data-hover-volume]"),
         signal: card.querySelector("[data-hover-signal]"),
         fiveDay: card.querySelector("[data-hover-five-day]"),
+        accumulationScore: card.querySelector("[data-hover-accumulation-score]"),
+        obv: card.querySelector("[data-hover-obv]"),
+        pullback: card.querySelector("[data-hover-pullback]"),
+        volumeRange: card.querySelector("[data-hover-volume-range]"),
+        dayOpen: card.querySelector("[data-hover-day-open]"),
+        dayHigh: card.querySelector("[data-hover-day-high]"),
+        dayLow: card.querySelector("[data-hover-day-low]"),
+        distanceHigh: card.querySelector("[data-hover-distance-high]"),
+        distanceLow: card.querySelector("[data-hover-distance-low]"),
+        marketCap: card.querySelector("[data-hover-market-cap]"),
         growth1m: card.querySelector("[data-hover-growth-1m]"),
         growth3m: card.querySelector("[data-hover-growth-3m]"),
         growth1y: card.querySelector("[data-hover-growth-1y]"),
@@ -30,6 +40,7 @@
         description: card.querySelector("[data-hover-description]"),
     };
     let hideTimer;
+    let pinned = false;
     const detailCache = {};
 
     const signed = (value, digits = 2) => {
@@ -49,6 +60,21 @@
         if (value >= 10000000) return `${(value / 10000000).toFixed(2)} Cr`;
         if (value >= 100000) return `${(value / 100000).toFixed(2)} L`;
         return Number(value).toLocaleString("en-IN");
+    };
+
+    const formatPrice = (value) => {
+        if (value === null || value === undefined) return "-";
+        return Number(value).toLocaleString("en-IN", {maximumFractionDigits: 2});
+    };
+
+    const formatPercent = (value) => {
+        if (value === null || value === undefined) return "-";
+        return `${signed(value)}%`;
+    };
+
+    const setFlag = (element, enabled) => {
+        if (!element) return;
+        element.classList.toggle("is-on", Boolean(enabled));
     };
 
     const chartPoints = (series) => {
@@ -78,10 +104,11 @@
         card.style.top = `${Math.max(10, top)}px`;
     };
 
-    const show = (target) => {
+    const show = (target, keepOpen = false) => {
         const item = tickerData[target.dataset.symbol];
         if (!item) return;
         clearTimeout(hideTimer);
+        pinned = keepOpen;
         const positive = Number(item.percent || 0) >= 0;
         fields.symbol.textContent = item.symbol;
         fields.sector.textContent = item.sector || "";
@@ -92,6 +119,16 @@
         fields.volume.textContent = `Volume: ${compactIndian(item.volume)}`;
         fields.signal.textContent = `Signal: ${item.signal || "Unavailable"}`;
         fields.fiveDay.textContent = `5 day: ${signed(item.five_day_change)}%`;
+        fields.accumulationScore.textContent = `${item.accumulation_score || 0}/3`;
+        fields.dayOpen.textContent = formatPrice(item.day_open);
+        fields.dayHigh.textContent = formatPrice(item.day_high);
+        fields.dayLow.textContent = formatPrice(item.day_low);
+        fields.distanceHigh.textContent = formatPercent(item.high52_distance);
+        fields.distanceLow.textContent = formatPercent(item.low52_distance);
+        fields.marketCap.textContent = compactIndian(item.market_cap);
+        setFlag(fields.obv, item.obv_divergence);
+        setFlag(fields.pullback, item.quiet_pullback);
+        setFlag(fields.volumeRange, item.volume_range_signal);
         fields.growth1m.textContent = "-";
         fields.growth3m.textContent = "-";
         fields.growth1y.textContent = "-";
@@ -103,6 +140,7 @@
         chart.setAttribute("points", chartPoints(item.series));
         card.classList.toggle("is-negative", !positive);
         card.classList.add("is-visible");
+        card.scrollTop = 0;
         card.setAttribute("aria-hidden", "false");
         requestAnimationFrame(() => placeCard(target));
         loadDetails(item.symbol);
@@ -137,8 +175,10 @@
         }
     };
 
-    const hide = () => {
+    const hide = (force = false) => {
+        if (pinned && !force) return;
         hideTimer = window.setTimeout(() => {
+            pinned = false;
             card.classList.remove("is-visible");
             card.setAttribute("aria-hidden", "true");
         }, 90);
@@ -146,31 +186,44 @@
 
     const handleEnter = (event) => {
         const target = event.target.closest(".stock-ticker[data-symbol]");
-        if (target) show(target);
+        if (target) show(target, false);
     };
     const handleLeave = (event) => {
         if (event.target.closest(".stock-ticker[data-symbol]")) hide();
     };
     document.addEventListener("pointerover", handleEnter);
     document.addEventListener("mouseover", handleEnter);
-    document.addEventListener("click", handleEnter);
     document.addEventListener("pointerout", handleLeave);
     document.addEventListener("mouseout", handleLeave);
     document.addEventListener("focusin", (event) => {
         const target = event.target.closest(".stock-ticker[data-symbol]");
-        if (target) show(target);
+        if (target) show(target, false);
     });
     document.addEventListener("focusout", (event) => {
         if (event.target.closest(".stock-ticker[data-symbol]")) hide();
     });
 
     document.addEventListener("click", (event) => {
+        if (event.target.closest("[data-hover-close]")) {
+            hide(true);
+            return;
+        }
+        const ticker = event.target.closest(".stock-ticker[data-symbol]");
+        if (ticker) {
+            show(ticker, true);
+            return;
+        }
         const toggle = event.target.closest(".sector-toggle[data-sector-target]");
-        if (!toggle) return;
-        const row = document.getElementById(toggle.dataset.sectorTarget);
-        if (!row) return;
-        const isOpen = !row.hidden;
-        row.hidden = isOpen;
-        toggle.classList.toggle("is-open", !isOpen);
+        if (toggle) {
+            const row = document.getElementById(toggle.dataset.sectorTarget);
+            if (!row) return;
+            const isOpen = !row.hidden;
+            row.hidden = isOpen;
+            toggle.classList.toggle("is-open", !isOpen);
+            return;
+        }
+        if (pinned && !card.contains(event.target)) {
+            hide(true);
+        }
     });
 })();

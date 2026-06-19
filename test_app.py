@@ -14,7 +14,12 @@ from app import (
     build_candles,
     build_calendar_panels,
     build_heatmap,
+    build_insights,
     build_sector_performance,
+    build_stock_rows,
+    compute_obv_divergence,
+    compute_quiet_pullback,
+    compute_volume_range_signal,
     apply_nifty_impact,
     apply_nse_quote_snapshot,
     fetch_nse_nifty50_snapshot,
@@ -102,6 +107,41 @@ class DataModelTests(unittest.TestCase):
         self.assertTrue(candles[0]["up"])
         self.assertFalse(candles[1]["up"])
 
+    def test_accumulation_helpers_handle_positive_and_insufficient_cases(self):
+        closes = pd.Series([100, 101, 100.5, 101.2, 100.8, 101.1, 100.9, 101.3, 101.0, 101.4,
+                            101.1, 101.5, 101.2, 101.6, 101.3, 101.7, 101.4, 101.8, 101.5, 101.9])
+        volumes = pd.Series([1000, 1600, 900, 1700, 950, 1800, 920, 1900, 940, 2000,
+                             960, 2100, 980, 2200, 1000, 2300, 1020, 2400, 1040, 2500])
+        self.assertTrue(compute_obv_divergence(closes, volumes))
+        self.assertFalse(compute_obv_divergence(pd.Series([1, 2]), pd.Series([10, 20])))
+
+    def test_quiet_pullback_and_volume_range_signal(self):
+        quiet_closes = pd.Series([100 + index * 0.2 for index in range(20)] + [110, 109.7, 109.5, 109.6])
+        quiet_volumes = pd.Series([1000] * 20 + [1800, 800, 750, 700])
+        self.assertTrue(compute_quiet_pullback(quiet_closes, quiet_volumes))
+
+        range_closes = pd.Series([100, 104, 99, 105, 100, 106, 101, 105, 99, 104,
+                                  102, 103, 102.5, 103.2, 102.8, 103.1, 102.9, 103.0, 102.7, 103.2])
+        range_volumes = pd.Series([1000] * 15 + [1300, 1350, 1320, 1400, 1380])
+        self.assertTrue(compute_volume_range_signal(range_closes, range_volumes))
+
+    def test_build_stock_rows_adds_accumulation_and_range_fields(self):
+        stock = {"symbol": "AAA.NS", "name": "AAA", "sector": "Tech", "industry": "Tech"}
+        frame = pd.DataFrame(
+            {
+                "Open": [100 + index for index in range(24)],
+                "High": [101 + index for index in range(24)],
+                "Low": [99 + index for index in range(24)],
+                "Close": [100 + index for index in range(24)],
+                "Volume": [1000] * 24,
+            }
+        )
+        rows = build_stock_rows({"AAA.NS": {"price": 123, "volume": 1000}}, frame, [stock])
+        self.assertIn("accumulation_score", rows[0])
+        self.assertIn("obv_divergence", rows[0])
+        self.assertEqual(rows[0]["day_open"], 123)
+        self.assertIsNotNone(rows[0]["high52_distance"])
+
     def test_breadth_and_heatmap(self):
         rows = [
             {"sector": "Tech", "display_symbol": "AAA", "price": 100, "percent": 2,
@@ -188,6 +228,25 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(sectors[0]["stocks"], 2)
         self.assertEqual(len(sectors[0]["members"]), 2)
         self.assertEqual(sectors[0]["members"][0]["display_symbol"], "AAA")
+
+    def test_build_insights_summarizes_accumulation_and_sector_counts(self):
+        rows = [
+            {"display_symbol": "AAA", "sector": "Tech", "price": 100, "high52": 102, "signal": "Uptrend",
+             "accumulation_score": 3, "five_day_change": 4.0, "obv_divergence": True,
+             "quiet_pullback": True, "volume_range_signal": True},
+            {"display_symbol": "BBB", "sector": "Tech", "price": 80, "high52": 100, "signal": "Neutral",
+             "accumulation_score": 2, "five_day_change": 1.0, "obv_divergence": False,
+             "quiet_pullback": True, "volume_range_signal": True},
+            {"display_symbol": "CCC", "sector": "Bank", "price": 50, "high52": 80, "signal": "Downtrend",
+             "accumulation_score": 1, "five_day_change": 5.0, "obv_divergence": True,
+             "quiet_pullback": False, "volume_range_signal": False},
+        ]
+        insights = build_insights(rows)
+        self.assertEqual(insights["accumulation_count"], 2)
+        self.assertEqual(insights["uptrend_count"], 1)
+        self.assertEqual(insights["near_high_count"], 1)
+        self.assertEqual(insights["ranked"][0]["display_symbol"], "AAA")
+        self.assertIn("Tech", insights["top_lines"][0])
 
     @patch("app.requests.Session")
     def test_nse_snapshot_fetch_uses_session_and_returns_rows(self, session_class):
@@ -310,8 +369,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260619-1", html)
-        self.assertIn("/static/js/dashboard.js?v=20260619-1", html)
+        self.assertIn("/static/css/style.css?v=20260619-2", html)
+        self.assertIn("/static/js/dashboard.js?v=20260619-2", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
@@ -322,6 +381,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Impact data unavailable", html)
         self.assertIn('action="/screener"', html)
         self.assertIn('class="active" href="/">Home</a>', html)
+        self.assertIn('href="/insights">Insights</a>', html)
         self.assertEqual(html.count('name="search"'), 1)
         self.assertNotIn(">Charts<", html)
         self.assertNotIn(">Maps<", html)
@@ -339,6 +399,35 @@ class RouteTests(unittest.TestCase):
         self.assertIn('class="active" href="/screener">Screener</a>', html)
         self.assertNotIn("AI Option Chain Analysis", html)
         self.assert_tool_navigation(html)
+
+    @patch("app.get_nifty500_universe", return_value=([], False))
+    @patch("app.get_stock_universe", return_value=([], False))
+    @patch("app.get_cached_swr")
+    def test_insights_route_reuses_cached_market_rows(self, cached, universe, broad_universe):
+        market = {
+            **SAMPLE_MARKET,
+            "rows": [{
+                "display_symbol": "AAA", "name": "AAA", "sector": "Tech", "price": 100,
+                "high52": 101, "signal": "Uptrend", "accumulation_score": 2,
+                "five_day_change": 3.2, "obv_divergence": True, "quiet_pullback": False,
+                "volume_range_signal": True, "percent": 1.0, "volume": 1000, "chart_series": [90, 100],
+                "change": 1.0, "market_cap": 10_000_000,
+            }],
+            "hover_data": {
+                "AAA": {"symbol": "AAA", "series": [90, 100], "accumulation_score": 2}
+            },
+            "market_stats": {
+                "tracked": 1, "priced": 1, "advance_ratio": 100,
+                "average_change": 1.0, "total_volume": 1000, "total_market_cap": 10_000_000,
+            },
+        }
+        cached.return_value = (market, False)
+        html = self.client.get("/insights").get_data(as_text=True)
+        self.assertIn("Market Insights", html)
+        self.assertIn("Accumulation Watch", html)
+        self.assertIn("AAA", html)
+        self.assertIn('class="active" href="/insights">Insights</a>', html)
+        self.assertEqual(cached.call_count, 1)
 
     @patch("app.get_stock_universe", return_value=(STOCKS, False))
     @patch("app.get_market_quotes", return_value=({}, False))
