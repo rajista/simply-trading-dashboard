@@ -42,6 +42,7 @@
     let hideTimer;
     let pinned = false;
     const detailCache = {};
+    const prefersTapPopup = window.matchMedia("(hover: none), (pointer: coarse)").matches;
 
     const signed = (value, digits = 2) => {
         if (value === null || value === undefined) return "-";
@@ -90,6 +91,11 @@
     };
 
     const placeCard = (target) => {
+        if (prefersTapPopup) {
+            card.style.left = "";
+            card.style.top = "";
+            return;
+        }
         const targetBox = target.getBoundingClientRect();
         const cardBox = card.getBoundingClientRect();
         let left = targetBox.left + Math.min(targetBox.width, 36);
@@ -108,7 +114,7 @@
         const item = tickerData[target.dataset.symbol];
         if (!item) return;
         clearTimeout(hideTimer);
-        pinned = keepOpen;
+        pinned = keepOpen || prefersTapPopup;
         const positive = Number(item.percent || 0) >= 0;
         fields.symbol.textContent = item.symbol;
         fields.sector.textContent = item.sector || "";
@@ -139,6 +145,7 @@
         fields.description.textContent = "Loading company details...";
         chart.setAttribute("points", chartPoints(item.series));
         card.classList.toggle("is-negative", !positive);
+        card.classList.toggle("is-mobile-popup", prefersTapPopup);
         card.classList.add("is-visible");
         card.scrollTop = 0;
         card.setAttribute("aria-hidden", "false");
@@ -191,10 +198,12 @@
     const handleLeave = (event) => {
         if (event.target.closest(".stock-ticker[data-symbol]")) hide();
     };
-    document.addEventListener("pointerover", handleEnter);
-    document.addEventListener("mouseover", handleEnter);
-    document.addEventListener("pointerout", handleLeave);
-    document.addEventListener("mouseout", handleLeave);
+    if (!prefersTapPopup) {
+        document.addEventListener("pointerover", handleEnter);
+        document.addEventListener("mouseover", handleEnter);
+        document.addEventListener("pointerout", handleLeave);
+        document.addEventListener("mouseout", handleLeave);
+    }
     document.addEventListener("focusin", (event) => {
         const target = event.target.closest(".stock-ticker[data-symbol]");
         if (target) show(target, false);

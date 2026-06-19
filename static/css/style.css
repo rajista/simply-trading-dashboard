@@ -367,6 +367,14 @@ tbody tr:hover { background: #2a303d; }
     pointer-events: auto;
 }
 .ticker-hover-card.is-visible { display: block; }
+.ticker-hover-card.is-mobile-popup {
+    right: 8px;
+    bottom: 8px;
+    left: 8px !important;
+    top: auto !important;
+    width: auto;
+    max-height: min(78vh, 680px);
+}
 .ticker-hover-card header {
     position: sticky;
     top: 0;
@@ -634,6 +642,7 @@ tbody tr:hover { background: #2a303d; }
 }
 .insights-table { grid-row: span 2; }
 .insight-table-scroll { max-height: none; }
+.insights-table table { min-width: 760px; }
 .signal-tags {
     display: flex;
     flex-wrap: wrap;
@@ -776,6 +785,7 @@ tbody tr:hover { background: #2a303d; }
     .market-tables { grid-template-columns: 1fr; }
     .heatmap { min-height: 420px; }
     .heatmap-groups { height: 380px; }
+    .heatmap .unavailable { min-height: 180px; }
     .headlines li { grid-template-columns: 55px 1fr; }
     .headlines li small { display: none; }
     .internal-grid { grid-template-columns: repeat(2, 1fr); }
@@ -787,7 +797,34 @@ tbody tr:hover { background: #2a303d; }
     .stats-grid > div { border-bottom: 1px solid #303744; }
     .stats-grid > div:nth-last-child(-n + 2) { border-bottom: 0; }
     .screener-toolbar { grid-template-columns: 1fr; }
+    .insight-stats { grid-template-columns: 1fr 1fr; }
+    .insights-table, .sector-bars, .insight-lines { padding: 8px; }
+    .insight-table-scroll {
+        max-height: none;
+        overflow-x: auto;
+    }
+    .insights-table table { min-width: 620px; }
     .range-grid, .growth-grid, .fund-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .accumulation-box { grid-template-columns: 1fr; }
     .sector-bar-row { grid-template-columns: 1fr; }
+    .ticker-hover-card.is-mobile-popup {
+        right: 10px;
+        bottom: 10px;
+        left: 10px !important;
+        max-height: calc(100vh - 92px);
+        border-radius: 8px;
+    }
+    .ticker-hover-card svg { height: 130px; }
+    .ticker-hover-card header strong { font-size: 18px; }
+    .ticker-hover-card header {
+        align-items: center;
+        gap: 8px;
+    }
+    .ticker-hover-card header b { font-size: 11px; }
+    .ticker-hover-close {
+        width: 30px;
+        height: 30px;
+        font-size: 18px;
+        line-height: 24px;
+    }
 }
