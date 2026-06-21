@@ -30,8 +30,10 @@ from app import (
     get_cached,
     get_cached_swr,
     get_market_status,
+    normalize_deal_frame,
     normalize_fii_dii_activity,
     parse_nse_index_card,
+    seconds_until_next_ist_midnight,
 )
 
 
@@ -230,6 +232,25 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(sectors[0]["members"][0]["display_symbol"], "AAA")
 
     def test_build_insights_summarizes_accumulation_and_sector_counts(self):
+        deal_data = {
+            "bulk": normalize_deal_frame(pd.DataFrame([
+                {"Date": "15-JUN-2026", "Symbol": "AAA", "Security Name": "AAA Ltd", "Client Name": "Fund A",
+                 "Buy / Sell": "BUY", "Quantity Traded": "1,00,000", "Trade Price / Wght. Avg. Price": "100"},
+                {"Date": "15-JUN-2026", "Symbol": "BBB", "Security Name": "BBB Ltd", "Client Name": "Fund B",
+                 "Buy / Sell": "SELL", "Quantity Traded": "50,000", "Trade Price / Wght. Avg. Price": "80"},
+            ]), "bulk"),
+            "block": normalize_deal_frame(pd.DataFrame([
+                {"Date": "10-JUN-2026", "Symbol": "AAA", "Security Name": "AAA Ltd", "Client Name": "Fund C",
+                 "Buy / Sell": "BUY", "Quantity Traded": "2,00,000", "Trade Price / Wght. Avg. Price": "105"},
+            ]), "block"),
+            "short": normalize_deal_frame(pd.DataFrame([
+                {"Date": "15-JUN-2026", "Symbol": "CCC", "Security Name": "CCC Ltd", "Quantity": "1,00,000"},
+                {"Date": "10-MAY-2026", "Symbol": "CCC", "Security Name": "CCC Ltd", "Quantity": "10,000"},
+            ]), "short"),
+            "source": "test",
+            "latest_date": "2026-06-15",
+            "refreshed_at": "2026-06-15 00:00 IST",
+        }
         rows = [
             {"display_symbol": "AAA", "sector": "Tech", "price": 100, "high52": 102, "signal": "Uptrend",
              "accumulation_score": 3, "five_day_change": 4.0, "obv_divergence": True,
@@ -241,12 +262,28 @@ class DataModelTests(unittest.TestCase):
              "accumulation_score": 1, "five_day_change": 5.0, "obv_divergence": True,
              "quiet_pullback": False, "volume_range_signal": False},
         ]
-        insights = build_insights(rows)
+        insights = build_insights(rows, deal_data)
         self.assertEqual(insights["accumulation_count"], 2)
         self.assertEqual(insights["uptrend_count"], 1)
         self.assertEqual(insights["near_high_count"], 1)
         self.assertEqual(insights["ranked"][0]["display_symbol"], "AAA")
+        self.assertEqual(insights["high_conviction"][0]["display_symbol"], "AAA")
+        self.assertGreater(insights["institutional_accumulation_count"], 0)
+        self.assertGreater(insights["rising_short_count"], 0)
         self.assertIn("Tech", insights["top_lines"][0])
+
+    def test_normalize_deal_frame_accepts_seed_and_refreshed_formats(self):
+        seed = normalize_deal_frame(pd.DataFrame([
+            {"Date": "15-JUN-2026", "Symbol": "AAA", "Security Name": "AAA Ltd", "Client Name": "Fund A",
+             "Buy / Sell": "BUY", "Quantity Traded": "1,00,000", "Trade Price / Wght. Avg. Price": "100"}
+        ]), "bulk")
+        refreshed = normalize_deal_frame(seed, "bulk")
+        self.assertEqual(refreshed.iloc[0]["symbol"], "AAA")
+        self.assertEqual(refreshed.iloc[0]["value"], 10_000_000)
+
+    def test_seconds_until_next_ist_midnight(self):
+        seconds = seconds_until_next_ist_midnight(datetime(2026, 6, 21, 23, 59, 0, tzinfo=IST))
+        self.assertEqual(seconds, 60)
 
     @patch("app.requests.Session")
     def test_nse_snapshot_fetch_uses_session_and_returns_rows(self, session_class):
@@ -369,8 +406,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260619-3", html)
-        self.assertIn("/static/js/dashboard.js?v=20260619-3", html)
+        self.assertIn("/static/css/style.css?v=20260621-1", html)
+        self.assertIn("/static/js/dashboard.js?v=20260621-1", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
@@ -421,13 +458,15 @@ class RouteTests(unittest.TestCase):
                 "average_change": 1.0, "total_volume": 1000, "total_market_cap": 10_000_000,
             },
         }
-        cached.return_value = (market, False)
+        cached.side_effect = [(market, False), ({}, False)]
         html = self.client.get("/insights").get_data(as_text=True)
         self.assertIn("Market Insights", html)
+        self.assertIn("High-Conviction Watchlist", html)
+        self.assertIn("Bulk / block / short data source", html)
         self.assertIn("Accumulation Watch", html)
         self.assertIn("AAA", html)
         self.assertIn('class="active" href="/insights">Insights</a>', html)
-        self.assertEqual(cached.call_count, 1)
+        self.assertEqual(cached.call_count, 2)
 
     @patch("app.get_stock_universe", return_value=(STOCKS, False))
     @patch("app.get_market_quotes", return_value=({}, False))

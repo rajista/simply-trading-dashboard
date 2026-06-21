@@ -5,21 +5,64 @@
 {% block content %}
 <section class="market-brief panel">
     <span class="brief-time">Today</span>
-    <strong>Market Insights: accumulation, trend and 52-week positioning across the tracked universe.</strong>
+    <strong>Market Insights: price trend, accumulation, bulk/block deals and short-selling pressure across the tracked universe.</strong>
     {% if market_stale %}<span class="stale-label">cached market data</span>{% endif %}
+    {% if deal_data_stale %}<span class="stale-label">cached deal data</span>{% endif %}
     {% if constituents_stale %}<span class="stale-label">cached constituents</span>{% endif %}
 </section>
 
 <section class="insight-stats stats-grid panel">
     <div><span>Accumulation score 2-3</span><strong>{{ insights.accumulation_count }}</strong></div>
     <div><span>Uptrend signals</span><strong class="positive">{{ insights.uptrend_count }}</strong></div>
-    <div><span>Near 52W highs</span><strong>{{ insights.near_high_count }}</strong></div>
-    <div><span>Stocks tracked</span><strong>{{ market.market_stats.tracked }}</strong></div>
-    <div><span>Average move</span><strong class="{{ 'positive' if market.market_stats.average_change and market.market_stats.average_change >= 0 else 'negative' }}">{{ "%+.2f%%"|format(market.market_stats.average_change) if market.market_stats.average_change is not none else "-" }}</strong></div>
-    <div><span>Total volume</span><strong>{{ format_volume(market.market_stats.total_volume) }}</strong></div>
+    <div><span>Deal + accumulation</span><strong>{{ insights.institutional_accumulation_count }}</strong></div>
+    <div><span>High conviction</span><strong>{{ insights.high_conviction_count }}</strong></div>
+    <div><span>Rising short pressure</span><strong class="{{ 'negative' if insights.rising_short_count else '' }}">{{ insights.rising_short_count }}</strong></div>
+    <div><span>Deal rows analysed</span><strong>{{ "{:,}".format(insights.deal_meta.row_count) }}</strong></div>
+</section>
+
+<section class="deal-meta panel">
+    <span>Bulk / block / short data source: <b>{{ insights.deal_meta.source }}</b></span>
+    <span>Latest deal date: <b>{{ insights.deal_meta.latest_date or "-" }}</b></span>
+    <span>Loaded: <b>{{ insights.deal_meta.refreshed_at or "-" }}</b></span>
+    <span>Refresh: <b>nightly at 00:00 IST</b></span>
 </section>
 
 <section class="insights-grid">
+    <article class="panel analyst-brief">
+        <h2>Analyst Desk Notes</h2>
+        {% for line in insights.top_lines %}
+            <p>{{ line }}</p>
+        {% endfor %}
+    </article>
+
+    <article class="panel conviction-table">
+        <h2>High-Conviction Watchlist</h2>
+        <div class="table-scroll insight-table-scroll">
+            <table>
+                <thead><tr><th>Symbol</th><th>Sector</th><th>Score</th><th>Price</th><th>5D</th><th>Analyst View</th><th>Drivers / Conflicts</th></tr></thead>
+                <tbody>
+                {% for row in insights.high_conviction %}
+                    <tr>
+                        <td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
+                        <td>{{ row.sector }}</td>
+                        <td><strong>{{ "%.1f"|format(row.composite_score) }}</strong></td>
+                        <td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td>
+                        <td class="{{ 'positive' if row.five_day_change and row.five_day_change >= 0 else 'negative' if row.five_day_change and row.five_day_change < 0 }}">{{ "%+.2f%%"|format(row.five_day_change) if row.five_day_change is not none else "-" }}</td>
+                        <td><span class="view-pill view-{{ row.analyst_view|lower }}">{{ row.analyst_view }}</span></td>
+                        <td class="insight-detail">
+                            {% for driver in row.drivers %}<span class="positive">{{ driver }}</span>{% endfor %}
+                            {% for conflict in row.conflicts %}<span class="negative">{{ conflict }}</span>{% endfor %}
+                            {% if not row.drivers and not row.conflicts %}<em>No strong combined signal yet</em>{% endif %}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="7" class="unavailable">High-conviction rows are still loading.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </article>
+
     <article class="panel insights-table">
         <h2>Accumulation Watch</h2>
         <div class="table-scroll insight-table-scroll">
@@ -60,11 +103,71 @@
         {% endfor %}
     </article>
 
-    <article class="panel insight-lines">
-        <h2>Generated Notes</h2>
-        {% for line in insights.top_lines %}
-            <p>{{ line }}</p>
-        {% endfor %}
+    <article class="panel deal-flow-panel">
+        <h2>Sector Deal Flow</h2>
+        <table>
+            <thead><tr><th>Sector</th><th>Bulk Net 30D</th><th>Block Net 90D</th><th>Short Qty 30D</th><th>Conflicts</th></tr></thead>
+            <tbody>
+            {% for sector in insights.sector_deal_flow %}
+                <tr>
+                    <td class="link">{{ sector.sector }}</td>
+                    <td class="{{ 'positive' if sector.bulk_net30 >= 0 else 'negative' }}">{{ "Rs " ~ format_market_cap(sector.bulk_net30|abs) }}</td>
+                    <td class="{{ 'positive' if sector.block_net90 >= 0 else 'negative' }}">{{ "Rs " ~ format_market_cap(sector.block_net90|abs) }}</td>
+                    <td>{{ format_volume(sector.short_qty30) }}</td>
+                    <td>{{ sector.conflicts }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="unavailable">Deal-flow data unavailable</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </article>
+
+    <article class="panel deal-flow-panel">
+        <h2>Bulk Deal Net Buying</h2>
+        <table>
+            <thead><tr><th>Symbol</th><th>30D Net</th><th>Trades</th><th>Signal</th></tr></thead>
+            <tbody>
+            {% for row in insights.bulk_buy_leaders %}
+                <tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td class="positive">Rs {{ format_market_cap(row.deal.bulk_net30) }}</td><td>{{ row.deal.bulk_trades30 }}</td><td>{{ row.analyst_view }}</td></tr>
+            {% else %}
+                <tr><td colspan="4" class="unavailable">No tracked bulk net buying found</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </article>
+
+    <article class="panel deal-flow-panel">
+        <h2>Bulk Deal Net Selling</h2>
+        <table>
+            <thead><tr><th>Symbol</th><th>30D Net</th><th>Trades</th><th>Conflict</th></tr></thead>
+            <tbody>
+            {% for row in insights.bulk_sell_leaders %}
+                <tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td class="negative">Rs {{ format_market_cap(row.deal.bulk_net30|abs) }}</td><td>{{ row.deal.bulk_trades30 }}</td><td>{{ row.conflicts[0] if row.conflicts else "Watch supply" }}</td></tr>
+            {% else %}
+                <tr><td colspan="4" class="unavailable">No tracked bulk net selling found</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </article>
+
+    <article class="panel deal-flow-panel">
+        <h2>Short-Selling Pressure</h2>
+        <table>
+            <thead><tr><th>Symbol</th><th>30D Qty</th><th>30D Trend</th><th>Price Signal</th></tr></thead>
+            <tbody>
+            {% for row in insights.short_pressure %}
+                <tr>
+                    <td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
+                    <td>{{ format_volume(row.deal.short_qty30) }}</td>
+                    <td class="{{ 'negative' if row.deal.short_change >= 40 else 'positive' if row.deal.short_change <= -20 else '' }}">{{ "%+.1f%%"|format(row.deal.short_change) }}</td>
+                    <td>{{ row.signal }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4" class="unavailable">No tracked short-selling pressure found</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </article>
 </section>
 

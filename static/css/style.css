@@ -635,14 +635,69 @@ tbody tr:hover { background: #2a303d; }
     grid-template-columns: minmax(0, 1.45fr) minmax(320px, .8fr);
     gap: 10px;
 }
-.insights-table, .sector-bars, .insight-lines { padding: 8px 10px; }
-.insights-table h2, .sector-bars h2, .insight-lines h2 {
+.insights-table, .sector-bars, .insight-lines, .analyst-brief, .conviction-table, .deal-flow-panel { padding: 8px 10px; }
+.insights-table h2, .sector-bars h2, .insight-lines h2, .analyst-brief h2, .conviction-table h2, .deal-flow-panel h2 {
     margin-bottom: 7px;
     color: var(--muted);
+}
+.deal-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    color: var(--muted);
+}
+.deal-meta b { color: var(--text); }
+.analyst-brief {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 5px;
+}
+.analyst-brief p {
+    margin: 0;
+    color: #c3c8d4;
+    line-height: 1.35;
+}
+.conviction-table {
+    grid-column: 1 / -1;
 }
 .insights-table { grid-row: span 2; }
 .insight-table-scroll { max-height: none; }
 .insights-table table { min-width: 760px; }
+.conviction-table table { min-width: 1060px; }
+.deal-flow-panel table { table-layout: fixed; }
+.deal-flow-panel td:first-child,
+.deal-flow-panel th:first-child {
+    max-width: 140px;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.insight-detail {
+    display: grid;
+    gap: 2px;
+    min-width: 260px;
+    text-align: left !important;
+}
+.insight-detail span,
+.insight-detail em {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.insight-detail em { color: var(--muted); font-style: normal; }
+.view-pill {
+    display: inline-flex;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: #2a2e39;
+    color: var(--text);
+}
+.view-aligned { background: rgba(38, 166, 154, .18); color: var(--gain); }
+.view-mixed { background: rgba(246, 200, 95, .16); color: #f6c85f; }
+.view-watch { color: var(--muted); }
 .signal-tags {
     display: flex;
     flex-wrap: wrap;
@@ -798,12 +853,16 @@ tbody tr:hover { background: #2a303d; }
     .stats-grid > div:nth-last-child(-n + 2) { border-bottom: 0; }
     .screener-toolbar { grid-template-columns: 1fr; }
     .insight-stats { grid-template-columns: 1fr 1fr; }
-    .insights-table, .sector-bars, .insight-lines { padding: 8px; }
+    .insights-table, .sector-bars, .insight-lines, .analyst-brief, .conviction-table, .deal-flow-panel { padding: 8px; }
     .insight-table-scroll {
         max-height: none;
         overflow-x: auto;
     }
     .insights-table table { min-width: 620px; }
+    .conviction-table table { min-width: 960px; }
+    .deal-flow-panel { overflow-x: auto; }
+    .deal-flow-panel table { min-width: 560px; }
+    .deal-meta { flex-direction: column; gap: 4px; }
     .range-grid, .growth-grid, .fund-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .accumulation-box { grid-template-columns: 1fr; }
     .sector-bar-row { grid-template-columns: 1fr; }
