@@ -718,7 +718,7 @@ tbody tr:hover { background: #2a303d; }
     padding: 0 12px 12px;
     background: #202632;
 }
-.growth-grid, .fund-grid, .range-grid {
+.growth-grid, .fund-grid, .range-grid, .advanced-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1px;
@@ -728,7 +728,8 @@ tbody tr:hover { background: #2a303d; }
 }
 .fund-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .range-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.growth-grid span, .fund-grid span, .range-grid span {
+.advanced-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.growth-grid span, .fund-grid span, .range-grid span, .advanced-grid span {
     display: grid;
     gap: 2px;
     padding: 6px;
@@ -737,7 +738,7 @@ tbody tr:hover { background: #2a303d; }
     font-size: 9px;
     text-transform: uppercase;
 }
-.growth-grid b, .fund-grid b, .range-grid b {
+.growth-grid b, .fund-grid b, .range-grid b, .advanced-grid b {
     overflow: hidden;
     color: var(--text);
     font-size: 11px;
@@ -1178,7 +1179,7 @@ tbody tr:hover { background: #2a303d; }
     .deal-flow-panel { overflow-x: auto; }
     .deal-flow-panel table { min-width: 560px; }
     .deal-meta { flex-direction: column; gap: 4px; }
-    .range-grid, .growth-grid, .fund-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .range-grid, .growth-grid, .fund-grid, .advanced-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .accumulation-box { grid-template-columns: 1fr; }
     .sector-bar-row { grid-template-columns: 1fr; }
     .ticker-hover-card.is-mobile-popup {

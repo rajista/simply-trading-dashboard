@@ -37,11 +37,20 @@
         pe: card.querySelector("[data-hover-pe]"),
         revenue: card.querySelector("[data-hover-revenue]"),
         pat: card.querySelector("[data-hover-pat]"),
+        roe: card.querySelector("[data-hover-roe]"),
+        roce: card.querySelector("[data-hover-roce]"),
+        pb: card.querySelector("[data-hover-pb]"),
+        profitCagr: card.querySelector("[data-hover-profit-cagr]"),
+        avgPe: card.querySelector("[data-hover-avg-pe]"),
+        debtEquity: card.querySelector("[data-hover-debt-equity]"),
+        promoter: card.querySelector("[data-hover-promoter]"),
+        fiiDii: card.querySelector("[data-hover-fii-dii]"),
+        dividendYield: card.querySelector("[data-hover-dividend-yield]"),
+        delivery: card.querySelector("[data-hover-delivery]"),
         description: card.querySelector("[data-hover-description]"),
     };
     let hideTimer;
     let pinned = false;
-    const detailCache = {};
     const prefersTapPopup = window.matchMedia("(hover: none), (pointer: coarse)").matches;
 
     const signed = (value, digits = 2) => {
@@ -71,6 +80,17 @@
     const formatPercent = (value) => {
         if (value === null || value === undefined) return "-";
         return `${signed(value)}%`;
+    };
+
+    const formatRatio = (value, digits = 2) => {
+        if (value === null || value === undefined) return "-";
+        return Number(value).toFixed(digits);
+    };
+
+    const formatTrendValue = (value, trend) => {
+        const formatted = formatPercent(value);
+        if (formatted === "-") return "-";
+        return trend ? `${formatted} ${trend}` : formatted;
     };
 
     const setFlag = (element, enabled) => {
@@ -135,14 +155,26 @@
         setFlag(fields.obv, item.obv_divergence);
         setFlag(fields.pullback, item.quiet_pullback);
         setFlag(fields.volumeRange, item.volume_range_signal);
-        fields.growth1m.textContent = "-";
-        fields.growth3m.textContent = "-";
-        fields.growth1y.textContent = "-";
-        fields.growth5y.textContent = "-";
-        fields.pe.textContent = "-";
-        fields.revenue.textContent = "-";
-        fields.pat.textContent = "-";
-        fields.description.textContent = "Loading company details...";
+        const detail = item.details || {};
+        const growth = detail.growth || {};
+        fields.growth1m.textContent = formatPercent(growth["1m"]);
+        fields.growth3m.textContent = formatPercent(growth["3m"]);
+        fields.growth1y.textContent = formatPercent(growth["1y"]);
+        fields.growth5y.textContent = formatPercent(growth["5y"]);
+        fields.pe.textContent = formatRatio(detail.pe_ratio);
+        fields.revenue.textContent = formatRevenue(detail.revenue);
+        fields.pat.textContent = formatPercent(detail.pat_margin);
+        fields.roe.textContent = formatPercent(detail.roe);
+        fields.roce.textContent = formatPercent(detail.roce);
+        fields.pb.textContent = formatRatio(detail.price_to_book);
+        fields.profitCagr.textContent = formatPercent(detail.profit_cagr_3y);
+        fields.avgPe.textContent = formatRatio(detail.avg_pe_3y);
+        fields.debtEquity.textContent = formatRatio(detail.debt_equity);
+        fields.promoter.textContent = formatTrendValue(detail.promoter_holding, detail.promoter_trend);
+        fields.fiiDii.textContent = formatTrendValue(detail.fii_dii_holding, detail.fii_dii_trend);
+        fields.dividendYield.textContent = formatPercent(detail.dividend_yield);
+        fields.delivery.textContent = formatPercent(detail.delivery_percent ?? item.delivery_percent);
+        fields.description.textContent = detail.description || "Company details unavailable in the current popup cache.";
         chart.setAttribute("points", chartPoints(item.series));
         card.classList.toggle("is-negative", !positive);
         card.classList.toggle("is-mobile-popup", prefersTapPopup);
@@ -150,36 +182,6 @@
         card.scrollTop = 0;
         card.setAttribute("aria-hidden", "false");
         requestAnimationFrame(() => placeCard(target));
-        loadDetails(item.symbol);
-    };
-
-    const applyDetails = (symbol, detail) => {
-        if (!card.classList.contains("is-visible") || fields.symbol.textContent !== symbol) return;
-        const growth = detail.growth || {};
-        fields.growth1m.textContent = `${signed(growth["1m"])}%`;
-        fields.growth3m.textContent = `${signed(growth["3m"])}%`;
-        fields.growth1y.textContent = `${signed(growth["1y"])}%`;
-        fields.growth5y.textContent = `${signed(growth["5y"])}%`;
-        fields.pe.textContent = detail.pe_ratio === null || detail.pe_ratio === undefined ? "-" : Number(detail.pe_ratio).toFixed(2);
-        fields.revenue.textContent = formatRevenue(detail.revenue);
-        fields.pat.textContent = detail.pat_margin === null || detail.pat_margin === undefined ? "-" : `${Number(detail.pat_margin).toFixed(2)}%`;
-        fields.description.textContent = detail.description || "Business description unavailable.";
-    };
-
-    const loadDetails = async (symbol) => {
-        if (detailCache[symbol]) {
-            applyDetails(symbol, detailCache[symbol]);
-            return;
-        }
-        try {
-            const response = await fetch(`/api/stocks/${encodeURIComponent(symbol)}`);
-            if (!response.ok) throw new Error("detail request failed");
-            const detail = await response.json();
-            detailCache[symbol] = detail;
-            applyDetails(symbol, detail);
-        } catch {
-            fields.description.textContent = "Company details temporarily unavailable.";
-        }
     };
 
     const hide = (force = false) => {

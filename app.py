@@ -242,10 +242,19 @@ NEWS_CACHE_TTL = 900
 CALENDAR_CACHE_TTL = 21600
 CONSTITUENT_CACHE_TTL = 86400
 BULK_BLOCK_CACHE_TTL = 24 * 60 * 60
+STOCK_DETAIL_CACHE_TTL = 24 * 60 * 60
+REPORTED_FINANCIAL_OVERRIDES = {
+    "INFY": {
+        "period": "2026-03-31",
+        "revenue_inr": 178_650 * 10_000_000,
+        "net_income_inr": 29_440 * 10_000_000,
+    }
+}
 _CACHE = {}
 _CACHE_LOCK = threading.Lock()
 _CACHE_REFRESHING = set()
 _BULK_BLOCK_REFRESH_STARTED = False
+_STOCK_DETAIL_REFRESH_STARTED = False
 
 
 def article_slug(value):
@@ -708,6 +717,11 @@ def apply_nse_quote_snapshot(rows, snapshot):
         change = _parse_number(item.get("change"))
         percent = _parse_number(item.get("pChange"))
         volume = _parse_number(item.get("totalTradedVolume"))
+        delivery_percent = _parse_number(
+            item.get("deliveryToTradedQuantity")
+            or item.get("deliveryQuantityToTradedQuantity")
+            or item.get("deliveryToTradedQty")
+        )
         if price is not None:
             row["price"] = price
         if change is not None:
@@ -716,6 +730,8 @@ def apply_nse_quote_snapshot(rows, snapshot):
             row["percent"] = percent
         if volume is not None:
             row["volume"] = volume
+        if delivery_percent is not None:
+            row["delivery_percent"] = delivery_percent
     return rows
 
 
@@ -965,6 +981,7 @@ def build_stock_rows(quotes, history, stocks):
                 "percent": percent,
                 "volume": current_volume,
                 "volume_change": volume_change,
+                "delivery_percent": quote.get("delivery_percent"),
                 "five_day_change": five_day_change,
                 "day_open": day_open,
                 "day_high": day_high,
@@ -1473,6 +1490,10 @@ def get_bulk_block_short_data():
 
 
 def build_stock_hover_data(rows):
+    return build_stock_hover_data_with_details(rows, {})
+
+
+def build_stock_hover_data_with_details(rows, details):
     return {
         row["display_symbol"]: {
             "symbol": row["display_symbol"],
@@ -1495,9 +1516,285 @@ def build_stock_hover_data(rows):
             "obv_divergence": row.get("obv_divergence", False),
             "quiet_pullback": row.get("quiet_pullback", False),
             "volume_range_signal": row.get("volume_range_signal", False),
+            "delivery_percent": row.get("delivery_percent"),
+            "details": details.get(row["display_symbol"], {}),
         }
         for row in rows
     }
+
+
+def _latest_statement_column(frame):
+    if frame is None or frame.empty:
+        return None
+    return frame.columns[0]
+
+
+def _statement_value(frame, labels, column=None):
+    if frame is None or frame.empty:
+        return None
+    column = column if column is not None else _latest_statement_column(frame)
+    if column is None or column not in frame:
+        return None
+    for label in labels:
+        if label in frame.index:
+            value = _parse_number(frame.loc[label, column])
+            if value is not None:
+                return value
+    return None
+
+
+def _statement_series(frame, labels):
+    if frame is None or frame.empty:
+        return []
+    values = []
+    for column in frame.columns:
+        value = _statement_value(frame, labels, column)
+        if value is not None:
+            values.append((column, value))
+    return values
+
+
+def _fx_average_to_inr(currency, end_date):
+    currency = (currency or "INR").upper()
+    if currency == "INR":
+        return 1.0
+    if currency not in {"USD"}:
+        return None
+    try:
+        end = pd.Timestamp(end_date).date()
+    except Exception:
+        end = datetime.now(IST).date()
+    start = end - timedelta(days=365)
+    key = f"fx:{currency}:INR:{start.isoformat()}:{end.isoformat()}"
+    rate, _ = get_cached(
+        key,
+        STOCK_DETAIL_CACHE_TTL * 7,
+        lambda: float(yf.Ticker("USDINR=X").history(start=start, end=end + timedelta(days=1))["Close"].dropna().mean()),
+    )
+    return rate if rate and math.isfinite(rate) else None
+
+
+def _financial_to_inr(value, financial_currency, period_end=None):
+    if value is None:
+        return None
+    rate = _fx_average_to_inr(financial_currency, period_end or datetime.now(IST).date())
+    return value * rate if rate else None
+
+
+def _percent_from_info(info, key):
+    value = _parse_number(info.get(key))
+    if value is None:
+        return None
+    return value * 100 if abs(value) <= 1 else value
+
+
+def _ratio_from_percent(value):
+    value = _parse_number(value)
+    if value is None:
+        return None
+    return value / 100 if abs(value) > 3 else value
+
+
+def _profit_cagr_3y(financials):
+    profits = _statement_series(
+        financials,
+        ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"],
+    )
+    if len(profits) < 4:
+        return None
+    latest = profits[0][1]
+    base = profits[3][1]
+    if latest <= 0 or base <= 0:
+        return None
+    return ((latest / base) ** (1 / 3) - 1) * 100
+
+
+def _average_pe_3y(financials, info, financial_currency):
+    market_cap = _parse_number(info.get("marketCap"))
+    if not market_cap:
+        return None
+    profits = _statement_series(
+        financials,
+        ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"],
+    )[:3]
+    pe_values = []
+    for period_end, profit in profits:
+        profit_inr = _financial_to_inr(profit, financial_currency, period_end)
+        if profit_inr and profit_inr > 0:
+            pe_values.append(market_cap / profit_inr)
+    return sum(pe_values) / len(pe_values) if pe_values else None
+
+
+def _compute_roce(financials, balance_sheet):
+    latest_income_col = _latest_statement_column(financials)
+    latest_balance_col = _latest_statement_column(balance_sheet)
+    ebit = _statement_value(financials, ["EBIT", "Operating Income"], latest_income_col)
+    total_assets = _statement_value(balance_sheet, ["Total Assets"], latest_balance_col)
+    current_liabilities = _statement_value(balance_sheet, ["Current Liabilities"], latest_balance_col)
+    invested_capital = _statement_value(balance_sheet, ["Invested Capital"], latest_balance_col)
+    capital_employed = invested_capital or (
+        total_assets - current_liabilities
+        if total_assets is not None and current_liabilities is not None
+        else None
+    )
+    if ebit is None or not capital_employed:
+        return None
+    return ebit / capital_employed * 100
+
+
+def _major_holder_value(frame, label):
+    try:
+        if frame is None or frame.empty or label not in frame.index:
+            return None
+        value = _parse_number(frame.loc[label, "Value"])
+        return value * 100 if value is not None and abs(value) <= 1 else value
+    except Exception:
+        return None
+
+
+def _build_stock_detail_from_ticker(stock, fx_warnings=None):
+    symbol = stock["symbol"]
+    display_symbol = symbol.removesuffix(".NS")
+    ticker = yf.Ticker(symbol)
+    info = ticker.info or {}
+    financials = ticker.financials
+    balance_sheet = ticker.balance_sheet
+    major_holders = ticker.major_holders
+    history = ticker.history(period="5y", interval="1d", auto_adjust=False)
+    closes = history["Close"].dropna() if history is not None and "Close" in history else pd.Series(dtype=float)
+    financial_currency = (info.get("financialCurrency") or info.get("currency") or "INR").upper()
+    latest_period = _latest_statement_column(financials)
+    annual_revenue = _statement_value(financials, ["Total Revenue"], latest_period)
+    annual_net_income = _statement_value(
+        financials,
+        ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"],
+        latest_period,
+    )
+    revenue_inr = _financial_to_inr(annual_revenue, financial_currency, latest_period)
+    net_income_inr = _financial_to_inr(annual_net_income, financial_currency, latest_period)
+    override = REPORTED_FINANCIAL_OVERRIDES.get(display_symbol)
+    if override and str(pd.Timestamp(latest_period).date()) == override["period"]:
+        revenue_inr = override["revenue_inr"]
+        net_income_inr = override["net_income_inr"]
+    if fx_warnings is not None and financial_currency != "INR" and annual_revenue:
+        fx_warnings[display_symbol] = {
+            "financial_currency": financial_currency,
+            "raw_revenue": annual_revenue,
+            "converted_revenue": revenue_inr,
+        }
+    promoter_holding = _major_holder_value(major_holders, "insidersPercentHeld")
+    institutional_holding = _major_holder_value(major_holders, "institutionsPercentHeld")
+    return {
+        "symbol": display_symbol,
+        "pe_ratio": _parse_number(info.get("trailingPE")) or _parse_number(info.get("forwardPE")),
+        "revenue": revenue_inr,
+        "revenue_currency": "INR" if revenue_inr is not None else None,
+        "pat_margin": (net_income_inr / revenue_inr * 100) if revenue_inr and net_income_inr else _percent_from_info(info, "profitMargins"),
+        "roe": _percent_from_info(info, "returnOnEquity"),
+        "roce": _compute_roce(financials, balance_sheet),
+        "price_to_book": _parse_number(info.get("priceToBook")),
+        "profit_cagr_3y": _profit_cagr_3y(financials),
+        "avg_pe_3y": _average_pe_3y(financials, info, financial_currency),
+        "debt_equity": _ratio_from_percent(info.get("debtToEquity")),
+        "promoter_holding": promoter_holding,
+        "promoter_trend": None,
+        "fii_dii_holding": institutional_holding,
+        "fii_dii_trend": None,
+        "dividend_yield": _parse_number(info.get("dividendYield")),
+        "delivery_percent": None,
+        "sector": info.get("sector") or "",
+        "industry": info.get("industry") or "",
+        "description": _strip_html(info.get("longBusinessSummary") or "")[:520],
+        "growth": {
+            "1m": _growth_from_closes(closes, 21),
+            "3m": _growth_from_closes(closes, 63),
+            "1y": _growth_from_closes(closes, 252),
+            "5y": _growth_from_closes(closes, min(1260, max(len(closes) - 2, 0))),
+        },
+    }
+
+
+def fetch_all_stock_popup_details(stocks):
+    details = {}
+    fx_warnings = {}
+    if stocks:
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {executor.submit(_build_stock_detail_from_ticker, stock, fx_warnings): stock for stock in stocks}
+            for future in as_completed(futures):
+                stock = futures[future]
+                symbol = stock["symbol"].removesuffix(".NS")
+                try:
+                    details[symbol] = future.result()
+                except Exception:
+                    details[symbol] = {
+                        "symbol": symbol,
+                        "description": "Company details temporarily unavailable.",
+                        "growth": {},
+                    }
+    return {
+        "details": details,
+        "refreshed_at": datetime.now(IST).strftime("%Y-%m-%d %H:%M IST"),
+        "fx_warnings": fx_warnings,
+    }
+
+
+def get_stock_popup_details(stocks):
+    symbols = [
+        stock.get("symbol") or f"{stock.get('display_symbol', '')}.NS"
+        for stock in stocks
+        if stock.get("symbol") or stock.get("display_symbol")
+    ]
+    key = f"stock_popup_details:{','.join(symbols)}"
+    data, stale = get_cached_swr(
+        key,
+        STOCK_DETAIL_CACHE_TTL,
+        lambda: fetch_all_stock_popup_details([
+            stock if stock.get("symbol") else {**stock, "symbol": f"{stock.get('display_symbol')}.NS"}
+            for stock in stocks
+        ]),
+        cold_async=True,
+    )
+    return data or {"details": {}, "fx_warnings": {}, "refreshed_at": None}, stale
+
+
+def _stock_detail_universe_keys():
+    stocks, _ = get_stock_universe()
+    broad_stocks, _ = get_nifty500_universe()
+    all_stocks = merge_stock_lists(stocks, broad_stocks)
+    return stocks, broad_stocks, all_stocks
+
+
+def refresh_stock_popup_details_cache():
+    _, _, stocks = _stock_detail_universe_keys()
+    data = fetch_all_stock_popup_details(stocks)
+    key = f"stock_popup_details:{','.join(stock['symbol'] for stock in stocks)}"
+    with _CACHE_LOCK:
+        _CACHE[key] = {
+            "data": data,
+            "expires": time_module.time() + STOCK_DETAIL_CACHE_TTL,
+        }
+    return data
+
+
+def _stock_detail_refresh_loop():
+    while True:
+        time_module.sleep(seconds_until_next_ist_midnight() + 900)
+        try:
+            refresh_stock_popup_details_cache()
+        except Exception:
+            pass
+
+
+def start_stock_detail_refresh_scheduler():
+    global _STOCK_DETAIL_REFRESH_STARTED
+    if _STOCK_DETAIL_REFRESH_STARTED or os.getenv("DISABLE_STOCK_DETAIL_REFRESH") == "1":
+        return
+    _STOCK_DETAIL_REFRESH_STARTED = True
+    threading.Thread(
+        target=_stock_detail_refresh_loop,
+        daemon=True,
+        name="stock-detail-daily-refresh",
+    ).start()
 
 
 def _sum_side(frame, side, column="value"):
@@ -1768,13 +2065,17 @@ def fetch_stock_detail(display_symbol):
 
 
 def get_stock_detail(display_symbol):
-    key = f"stock_detail:{display_symbol.upper()}"
-    detail, _ = get_cached(
-        key,
-        86400,
-        lambda: fetch_stock_detail(display_symbol),
-    )
-    return detail or {}
+    clean_symbol = _normalize_symbol(display_symbol)
+    with _CACHE_LOCK:
+        popup_caches = [
+            value.get("data", {}).get("details", {})
+            for key, value in _CACHE.items()
+            if key.startswith("stock_popup_details:")
+        ]
+    for details in popup_caches:
+        if clean_symbol in details:
+            return details[clean_symbol]
+    return {}
 
 
 def apply_nifty_impact(rows, snapshot):
@@ -2174,6 +2475,14 @@ def dashboard():
     )
     headlines = headlines or []
     fii_dii = fii_dii or []
+    popup_detail_data, popup_details_stale = get_stock_popup_details(market["rows"])
+    market = {
+        **market,
+        "hover_data": build_stock_hover_data_with_details(
+            market["rows"],
+            popup_detail_data.get("details", {}),
+        ),
+    }
     calendar = build_calendar_panels(calendar_entries or [])
     earnings = enrich_earnings(calendar["earnings"], market["rows"])
     leading_index = next((card for card in market["indices"] if card.get("available")), None)
@@ -2189,6 +2498,7 @@ def dashboard():
         market=market,
         headlines=headlines,
         market_stale=market_stale,
+        popup_details_stale=popup_details_stale,
         news_stale=news_stale,
         fii_dii=fii_dii,
         fii_dii_stale=fii_dii_stale,
@@ -2208,6 +2518,14 @@ def dashboard():
 def insights():
     market_context = load_cached_market_context()
     market = market_context["market"]
+    popup_detail_data, popup_details_stale = get_stock_popup_details(market["rows"])
+    market = {
+        **market,
+        "hover_data": build_stock_hover_data_with_details(
+            market["rows"],
+            popup_detail_data.get("details", {}),
+        ),
+    }
     deal_data, deal_data_stale = get_bulk_block_short_data()
     insight_data = build_insights(market["rows"], deal_data or {})
     return render_template(
@@ -2216,6 +2534,7 @@ def insights():
         market=market,
         insights=insight_data,
         market_stale=market_context["market_stale"],
+        popup_details_stale=popup_details_stale,
         deal_data_stale=deal_data_stale,
         constituents_stale=market_context["constituents_stale"],
         format_market_cap=format_market_cap,
@@ -2265,6 +2584,7 @@ def screener():
 
 
 start_bulk_block_refresh_scheduler()
+start_stock_detail_refresh_scheduler()
 
 
 if __name__ == "__main__":

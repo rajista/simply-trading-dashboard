@@ -16,6 +16,7 @@ from app import (
     build_heatmap,
     build_insights,
     build_sector_performance,
+    build_stock_hover_data_with_details,
     build_stock_rows,
     compute_obv_divergence,
     compute_quiet_pullback,
@@ -30,6 +31,7 @@ from app import (
     get_cached,
     get_cached_swr,
     get_market_status,
+    _financial_to_inr,
     normalize_deal_frame,
     normalize_fii_dii_activity,
     parse_nse_index_card,
@@ -143,6 +145,27 @@ class DataModelTests(unittest.TestCase):
         self.assertIn("obv_divergence", rows[0])
         self.assertEqual(rows[0]["day_open"], 123)
         self.assertIsNotNone(rows[0]["high52_distance"])
+
+    @patch("app._fx_average_to_inr", return_value=88.33562561510138)
+    def test_usd_financials_are_converted_to_inr_before_display(self, fx):
+        infy_usd_revenue = 20_158_000_000
+        converted = _financial_to_inr(infy_usd_revenue, "USD", pd.Timestamp("2026-03-31"))
+        self.assertGreater(converted, 1_700_000_000_000)
+        self.assertLess(converted, 1_850_000_000_000)
+
+    def test_hover_data_embeds_prebuilt_popup_details(self):
+        rows = [{
+            "display_symbol": "AAA", "name": "AAA Ltd", "sector": "Tech", "price": 10,
+            "change": 1, "percent": 10, "five_day_change": 2, "volume": 1000,
+            "market_cap": 10_000_000, "signal": "Uptrend", "chart_series": [9, 10],
+            "day_open": 9, "day_high": 11, "day_low": 8, "high52_distance": -2,
+            "low52_distance": 25, "accumulation_score": 2, "obv_divergence": True,
+            "quiet_pullback": False, "volume_range_signal": True, "delivery_percent": 45,
+        }]
+        details = {"AAA": {"roe": 20, "revenue": 100_000_000, "growth": {"1y": 12}}}
+        hover = build_stock_hover_data_with_details(rows, details)
+        self.assertEqual(hover["AAA"]["details"]["roe"], 20)
+        self.assertEqual(hover["AAA"]["delivery_percent"], 45)
 
     def test_breadth_and_heatmap(self):
         rows = [
@@ -399,14 +422,20 @@ class RouteTests(unittest.TestCase):
     @patch("app.get_stock_universe", return_value=([], False))
     @patch("app.get_cached_swr")
     def test_dashboard_structure_and_search_routing(self, cached, universe, broad_universe):
-        cached.side_effect = [(SAMPLE_MARKET, False), ([], False), ([], False), ([], False)]
+        cached.side_effect = [
+            (SAMPLE_MARKET, False),
+            ([], False),
+            ([], False),
+            ([], False),
+            ({"details": {}, "fx_warnings": {}, "refreshed_at": None}, False),
+        ]
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn("NIFTY 50 Stocks - 1 Day Performance", html)
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260621-2", html)
-        self.assertIn("/static/js/dashboard.js?v=20260621-2", html)
+        self.assertIn("/static/css/style.css?v=20260621-3", html)
+        self.assertIn("/static/js/dashboard.js?v=20260621-3", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
@@ -458,7 +487,11 @@ class RouteTests(unittest.TestCase):
                 "average_change": 1.0, "total_volume": 1000, "total_market_cap": 10_000_000,
             },
         }
-        cached.side_effect = [(market, False), ({}, False)]
+        cached.side_effect = [
+            (market, False),
+            ({"details": {}, "fx_warnings": {}, "refreshed_at": None}, False),
+            ({}, False),
+        ]
         html = self.client.get("/insights").get_data(as_text=True)
         self.assertIn("Market Insights", html)
         self.assertIn("High-Conviction Watchlist", html)
@@ -466,7 +499,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Accumulation Watch", html)
         self.assertIn("AAA", html)
         self.assertIn('class="active" href="/insights">Insights</a>', html)
-        self.assertEqual(cached.call_count, 2)
+        self.assertEqual(cached.call_count, 3)
 
     def test_articles_page_uses_internal_layout_with_filters_and_search(self):
         html = self.client.get("/articles").get_data(as_text=True)
