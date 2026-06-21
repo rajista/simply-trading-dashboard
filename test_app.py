@@ -361,7 +361,6 @@ class DataModelTests(unittest.TestCase):
 
 class RouteTests(unittest.TestCase):
     TOOL_LINKS = {
-        "Articles": "https://trading-simplified.com/blog/",
         "SWP Calculator": "https://trading-simplified.com/swp-calculator/",
         "Retirement Stress Test": "https://retirement.trading-simplified.com/",
         "Option Chain Analysis": "https://trading-simplified.com/option-chain-analysis/",
@@ -385,7 +384,7 @@ class RouteTests(unittest.TestCase):
 
     def test_public_tool_paths_redirect_to_existing_services(self):
         destinations = {
-            "/blog/": "https://trading-simplified.com/blog/",
+            "/blog/": "/articles",
             "/swp-calculator/": "https://trading-simplified.com/swp-calculator/",
             "/option-chain-analysis/": "https://trading-simplified.com/option-chain-analysis/",
             "/option-builder/": "https://trading-simplified.com/option-builder/",
@@ -406,8 +405,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260621-1", html)
-        self.assertIn("/static/js/dashboard.js?v=20260621-1", html)
+        self.assertIn("/static/css/style.css?v=20260621-2", html)
+        self.assertIn("/static/js/dashboard.js?v=20260621-2", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
@@ -419,6 +418,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn('action="/screener"', html)
         self.assertIn('class="active" href="/">Home</a>', html)
         self.assertIn('href="/insights">Insights</a>', html)
+        self.assertIn('href="/articles">Articles</a>', html)
         self.assertEqual(html.count('name="search"'), 1)
         self.assertNotIn(">Charts<", html)
         self.assertNotIn(">Maps<", html)
@@ -467,6 +467,27 @@ class RouteTests(unittest.TestCase):
         self.assertIn("AAA", html)
         self.assertIn('class="active" href="/insights">Insights</a>', html)
         self.assertEqual(cached.call_count, 2)
+
+    def test_articles_page_uses_internal_layout_with_filters_and_search(self):
+        html = self.client.get("/articles").get_data(as_text=True)
+        self.assertIn("Trading Simplified Articles", html)
+        self.assertIn("Practical trading research, dashboard guides, backtests and market notes.", html)
+        self.assertIn('class="active" href="/articles">Articles</a>', html)
+        self.assertIn('class="featured-article-card"', html)
+        self.assertIn('class="recent-articles-panel"', html)
+        self.assertIn('class="article-filter-pills"', html)
+        self.assertIn('placeholder="Search articles..."', html)
+        self.assertIn("Trading Simplified Dashboard &amp; Market Insights", html)
+        self.assertIn("https://trading-simplified.com/2026/06/21/trading-simplified-dashboard-market-insights-indian-markets/", html)
+
+    def test_articles_page_filters_by_category_and_search(self):
+        stocks_html = self.client.get("/articles?category=stocks").get_data(as_text=True)
+        self.assertIn("Trading Simplified Dashboard &amp; Market Insights", stocks_html)
+        self.assertNotIn("Nasdaq Stock Analysis May 2026", stocks_html)
+
+        search_html = self.client.get("/articles?q=zerodha").get_data(as_text=True)
+        self.assertIn("Zerodha PnL summary", search_html)
+        self.assertNotIn("Trading Simplified Dashboard &amp; Market Insights", search_html)
 
     @patch("app.get_stock_universe", return_value=(STOCKS, False))
     @patch("app.get_market_quotes", return_value=({}, False))

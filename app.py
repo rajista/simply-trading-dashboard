@@ -64,6 +64,179 @@ PAGE_REDIRECTS = {
     "option-builder": "https://trading-simplified.com/option-builder/",
     "market-performance": "https://trading-simplified.com/market-performance/",
 }
+ARTICLE_POSTS_SOURCE = [
+    {
+        "title": "Trading Simplified Dashboard & Market Insights: A Smarter Way to Read Indian Markets",
+        "url": "https://trading-simplified.com/2026/06/21/trading-simplified-dashboard-market-insights-indian-markets/",
+        "date": "2026-06-21",
+        "author": "rajista",
+        "categories": ["Stocks"],
+        "tags": ["market dashboard", "market insights", "nifty", "NSE", "stock analysis", "trading"],
+        "excerpt": "Explore the Trading Simplified Indian Market Dashboard and Market Insights sections, including live NSE index snapshots, breadth indicators, top movers, sector performance, accumulation signals, deal-flow context and high-conviction watchlists.",
+    },
+    {
+        "title": "Nasdaq Stock Analysis May 2026: NVDA, MSFT &amp; AppLovin — Data-Driven Breakdown",
+        "url": "https://trading-simplified.com/2026/05/23/nasdaq-stock-analysis-may-2026-nvda-msft-applovin/",
+        "date": "2026-05-23",
+        "author": "rajista",
+        "categories": ["US stocks"],
+        "tags": ["ai", "AI stocks", "AppLovin", "finance", "investing", "May 2026", "Microsoft Azure", "MSFT", "Nasdaq", "NVDA", "NVIDIA earnings", "stock analysis", "technology"],
+        "excerpt": "The Nasdaq Composite has staged a powerful recovery in Spring 2026 after a brutal 16% drawdown in Q1. Earnings season just closed, and three major Nasdaq stocks — NVIDIA (NVDA), Microsoft (MSFT), and AppLovin (APP) — are telling three very&hellip;",
+    },
+    {
+        "title": "Nippon India Small Cap Fund SWP Simulator v2: Flexible Inputs, 5 Scenarios &amp; Crash-Year Stress Testing",
+        "url": "https://trading-simplified.com/2026/05/17/nippon-india-small-cap-fund-swp-simulator-v2-flexible-inputs-5-scenarios-crash-year-stress-testing/",
+        "date": "2026-05-17",
+        "author": "rajista",
+        "categories": ["Mutual Funds", "Uncategorized"],
+        "tags": ["CAGR", "finance", "investing", "Mutual Fund", "NAV", "Nippon Small Cap", "passive-income", "personal-finance", "Portfolio Simulation", "Small Cap", "Small Cap Fund", "Stocks", "SWP", "Systematic Withdrawal Plan"],
+        "excerpt": "This post is a major update to our earlier SWP projection analysis. The new simulator lets you change the initial investment amount and withdrawal percentages — and models all five market scenarios with exactly 3 negative return years each, reflecting&hellip;",
+    },
+    {
+        "title": "Nippon India Small Cap Fund SWP Projection: Monthly Withdrawal, CAGR &amp; Portfolio Survival Analysis",
+        "url": "https://trading-simplified.com/2026/05/09/nippon-india-small-cap-fund-swp-projection-monthly-withdrawal-cagr-portfolio-survival-analysis/",
+        "date": "2026-05-09",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": ["finance", "investing", "investment", "personal-finance", "Stocks"],
+        "excerpt": "This post documents a systematic withdrawal plan (SWP) simulation on a ₹70 lakh lump-sum investment in Nippon India Small Cap Fund — Direct Growth, started in April 2024. The analysis covers 24 months of actual NAV data, a month-by-month capital&hellip;",
+    },
+    {
+        "title": "Mastering IV Inversions for Profitable Trading Tips",
+        "url": "https://trading-simplified.com/2025/08/24/mastering-iv-inversions-for-profitable-trading-tips/",
+        "date": "2025-08-24",
+        "author": "rajista",
+        "categories": ["Stocks"],
+        "tags": ["ai", "algotrading", "data-science", "machine-learning", "nifty", "python", "technology", "trading", "tradingview"],
+        "excerpt": "Find IV Inversions and Calendar Spread Opportunities Like a Pro 🚀 🔍 Introduction Trading is all about identifying hidden edges where risk and reward align in your favor. One such edge comes from Implied Volatility (IV) inversions of option contracts between near&hellip;",
+    },
+    {
+        "title": "📈 Covered Call Strategy Backtest in Python (NSE Data + Breeze API)",
+        "url": "https://trading-simplified.com/2025/08/24/%f0%9f%93%88-covered-call-strategy-backtest-in-python-nse-data-breeze-api/",
+        "date": "2025-08-24",
+        "author": "rajista",
+        "categories": ["Stocks"],
+        "tags": ["algotrading", "breezeapi", "icicidirect", "nifty", "NSE", "nsepython"],
+        "excerpt": "Intro. Covered calls are one of the most popular options trading strategies among retail and professional traders. The idea is simple: 👉 You own a stock (or take it synthetically in backtest) and sell call options against it every month.This&hellip;",
+    },
+    {
+        "title": "Home Depot Stock: Weathering Short-Term Challenges for Long-Term Potential",
+        "url": "https://trading-simplified.com/2023/04/23/home-depot-stock-weathering-short-term-challenges-for-long-term-potential/",
+        "date": "2023-04-23",
+        "author": "rajista",
+        "categories": ["Stocks"],
+        "tags": ["dowjones", "homedepot", "stocktrading", "trading"],
+        "excerpt": "After experiencing a 10% decline year-to-date, Home Depot stock (NYSE: HD), the world's largest home improvement retailer, is currently priced at around $285 per share. This decline has been attributed to challenges in the housing market and rising inflation, as&hellip;",
+    },
+    {
+        "title": "Get historical option charts",
+        "url": "https://trading-simplified.com/2022/12/21/get-historical-option-charts/",
+        "date": "2022-12-21",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": ["algotrading", "breezeapi", "icicidirect", "kite", "trading"],
+        "excerpt": "As historical option charts are not easily available on broker terminals. I thought about writing a program to get one with the help of ICICI Direct Breeze api. This code will work only if you have the following: Python 3.xx&hellip;",
+    },
+    {
+        "title": "Zerodha PnL summary",
+        "url": "https://trading-simplified.com/2021/09/21/zerodha-pnl-summary/",
+        "date": "2021-09-21",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": [],
+        "excerpt": "We will use the Kiteconnect module in python for this tutorial You will need to have zerodha API subscription and python setup for this The following code will give the Profit and loss summary for trades taken throughout the day:&hellip;",
+    },
+    {
+        "title": "NSE Freak trade",
+        "url": "https://trading-simplified.com/2021/08/22/nse-freaktrade/",
+        "date": "2021-08-22",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": ["algotrading", "freak trade", "kite", "NSE", "python", "trading", "tradingview"],
+        "excerpt": "Recently there has been few instances of \"freak trades\" happening in the derivates segment of NSE exchange. In case you are wondering what is a Freak trade and how you can avoid such trades, then you’re in the right place.&hellip;",
+    },
+    {
+        "title": "Get Atm strike price of any stock",
+        "url": "https://trading-simplified.com/2021/08/16/get-atm-strike-price-of-any-stock/",
+        "date": "2021-08-16",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": [],
+        "excerpt": "To get the at the money (ATM) strikes of a stock we will use the NSEpython module in python. Please make sure that you have the nsepython module installed, else: Type this in the terminal: $pip install nsepython We will&hellip;",
+    },
+    {
+        "title": "Getting current weekly expiry details for Banknifty",
+        "url": "https://trading-simplified.com/2021/08/15/getting-current-weekly-expiry-details-for-banknifty/",
+        "date": "2021-08-15",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": [],
+        "excerpt": "To run any options based trading system we need the tradingsymbol for the latest expiring call and put options. The format for weekly expiring options is: BANKNIFTY&lt;YY&gt;&lt;M&gt;&lt;DD&gt;strike&lt;PE/CE&gt; Where M is given as 1 for JAN, 2 for FEB, 3, 4,&hellip;",
+    },
+    {
+        "title": "Vwap rejection strategy with ATR based stop",
+        "url": "https://trading-simplified.com/2021/08/14/vwap-rejection-strategy-with-atr-based-stop/",
+        "date": "2021-08-14",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": [],
+        "excerpt": "The strategy is based on vwap (volume weighted average price) and ATR (average true range). The strategy takes a long trade when the asset is gapping up and subsequently price goes into a consolidation phase and finally if we get&hellip;",
+    },
+    {
+        "title": "Trading Journal simplified",
+        "url": "https://trading-simplified.com/2021/07/31/trading-journal-simplified/",
+        "date": "2021-07-31",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": [],
+        "excerpt": "I had used the following trading journal in my initial trading days when i used to do intraday trading. One of the most important things to have when you're trading is a Trading journal, to constantly review your performance and&hellip;",
+    },
+    {
+        "title": "How to get ATM strikes of Banknifty",
+        "url": "https://trading-simplified.com/2021/07/25/how-to-get-atm-strikes-of-banknifty/",
+        "date": "2021-07-25",
+        "author": "rajista",
+        "categories": ["nsepy"],
+        "tags": ["banknifty", "nifty", "nsepy"],
+        "excerpt": "To get the at the money (ATM) strikes of Banknifty index we will use the NSEpython module in python. Please make sure that you have the nsepython module installed, else: Type this in the terminal: $pip install nsepython First we&hellip;",
+    },
+    {
+        "title": "Nsepython: Getting Nifty/Banknifty Ltp",
+        "url": "https://trading-simplified.com/2021/07/25/nsepython-getting-nifty-banknifty-ltp/",
+        "date": "2021-07-25",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": ["kite", "nsepython", "python"],
+        "excerpt": "We can use the nsepython library to fetch data from the NSE website. Steps to install NSEPython: In any Python ide, for ex- pycharm type the following code in the terminal: $pip install nsepythonTo upgrade to the latest version,pip install&hellip;",
+    },
+    {
+        "title": "Pine script Tutorial",
+        "url": "https://trading-simplified.com/2021/02/02/pine-script-tutorial/",
+        "date": "2021-02-02",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": ["algotrading", "bitcoin", "pine", "pinescript", "trading", "tradingview"],
+        "excerpt": "Trading strategies&nbsp;are one of the best ways to avoid behavioral biases and ensure consistent results. Strategies employ indicators in an objective manner to determine entry, exit and/or trade management rules. They include the detailed use of indicators or, multiple indicators, to&hellip;",
+    },
+    {
+        "title": "About me",
+        "url": "https://trading-simplified.com/2021/02/02/example-post-3/",
+        "date": "2021-02-02",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": [],
+        "excerpt": "Founder of Simplytrading. Trading analyst and derivatives trader. Expert in the field of algorithmic trading and a rich experience of trading different asset classes. Tutoring new traders on deploying fully automated trading strategies and other aspects of Trade automation and&hellip;",
+    },
+    {
+        "title": "Site description",
+        "url": "https://trading-simplified.com/2021/02/02/example-post-2/",
+        "date": "2021-02-02",
+        "author": "rajista",
+        "categories": ["Uncategorized"],
+        "tags": [],
+        "excerpt": "Simplifying the process of trading through regular market insights, new trading strategies and backtesting for various asset classes",
+    },
+]
 MARKET_CACHE_TTL = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "1200"))
 NEWS_CACHE_TTL = 900
 CALENDAR_CACHE_TTL = 21600
@@ -73,6 +246,71 @@ _CACHE = {}
 _CACHE_LOCK = threading.Lock()
 _CACHE_REFRESHING = set()
 _BULK_BLOCK_REFRESH_STARTED = False
+
+
+def article_slug(value):
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "articles"
+
+
+def article_image_url(url, width=1200):
+    return f"https://s0.wp.com/mshots/v1/{quote(url, safe='')}?w={width}"
+
+
+def clean_article_text(value):
+    return re.sub(r"\s+", " ", unescape(value or "")).strip()
+
+
+def format_article_date(value):
+    published = date.fromisoformat(value)
+    return published.strftime("%b %d, %Y")
+
+
+def build_article_posts():
+    posts = []
+    for source in ARTICLE_POSTS_SOURCE:
+        categories = source.get("categories") or ["Articles"]
+        primary_category = next(
+            (category for category in categories if category.lower() != "uncategorized"),
+            categories[0],
+        )
+        title = clean_article_text(source["title"])
+        excerpt = clean_article_text(source.get("excerpt", ""))
+        tags = [clean_article_text(tag) for tag in source.get("tags", [])]
+        search_text = " ".join([title, excerpt, primary_category, *categories, *tags]).lower()
+        posts.append(
+            {
+                **source,
+                "title": title,
+                "excerpt": excerpt,
+                "tags": tags,
+                "primary_category": primary_category,
+                "primary_category_slug": article_slug(primary_category),
+                "category_slugs": {article_slug(category) for category in categories},
+                "date_label": format_article_date(source["date"]),
+                "image_url": article_image_url(source["url"]),
+                "search_text": search_text,
+            }
+        )
+    return posts
+
+
+ARTICLE_POSTS = build_article_posts()
+ARTICLE_CATEGORY_ORDER = {
+    "Stocks": 0,
+    "US stocks": 1,
+    "Mutual Funds": 2,
+    "nsepy": 3,
+    "Uncategorized": 4,
+}
+ARTICLE_CATEGORIES = sorted(
+    {
+        category
+        for post in ARTICLE_POSTS_SOURCE
+        for category in post.get("categories", [])
+    },
+    key=lambda category: (ARTICLE_CATEGORY_ORDER.get(category, 99), category.lower()),
+)
 
 
 def fetch_price_data(symbols):
@@ -1857,8 +2095,36 @@ def load_cached_market_context():
 
 
 @app.route("/blog/")
+def blog_redirect():
+    return redirect("/articles", code=302)
+
+
+@app.route("/articles")
 def articles():
-    return redirect(PAGE_REDIRECTS["articles"], code=302)
+    selected_category = request.args.get("category", "").strip()
+    query = request.args.get("q", "").strip()
+    search = query.lower()
+    filtered_articles = [
+        post
+        for post in ARTICLE_POSTS
+        if (not selected_category or selected_category in post["category_slugs"])
+        and (not search or search in post["search_text"])
+    ]
+    featured = filtered_articles[0] if filtered_articles else None
+    recent_articles = filtered_articles[1:6] if featured else []
+    return render_template(
+        "articles.html",
+        **common_context("articles", False),
+        articles=filtered_articles,
+        featured_article=featured,
+        recent_articles=recent_articles,
+        categories=[
+            {"name": category, "slug": article_slug(category)}
+            for category in ARTICLE_CATEGORIES
+        ],
+        selected_category=selected_category,
+        search_query=query,
+    )
 
 
 @app.route("/swp-calculator/")

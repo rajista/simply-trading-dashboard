@@ -1,0 +1,92 @@
+{% extends "layout.html" %}
+
+{% block title %}Trading Simplified Articles{% endblock %}
+
+{% block content %}
+<section class="articles-hero" aria-labelledby="articles-title">
+    <p class="articles-eyebrow">Research library</p>
+    <h1 id="articles-title">Trading Simplified Articles</h1>
+    <p>Practical trading research, dashboard guides, backtests and market notes.</p>
+</section>
+
+{% if featured_article %}
+<section class="articles-spotlight" aria-label="Featured and recent articles">
+    <a class="featured-article-card" href="{{ featured_article.url }}" target="_blank" rel="noopener noreferrer">
+        <img src="{{ featured_article.image_url }}" alt="" loading="eager">
+        <div class="featured-article-copy">
+            <div class="article-meta">
+                <span>{{ featured_article.primary_category }}</span>
+                <time datetime="{{ featured_article.date }}">{{ featured_article.date_label }}</time>
+            </div>
+            <h2>{{ featured_article.title }}</h2>
+            <p>{{ featured_article.excerpt }}</p>
+            <small>By {{ featured_article.author }}</small>
+        </div>
+    </a>
+
+    <aside class="recent-articles-panel" aria-labelledby="recent-articles-title">
+        <div class="recent-articles-heading">
+            <p class="articles-eyebrow">Fresh signals</p>
+            <h2 id="recent-articles-title">Recent Posts</h2>
+        </div>
+        {% for article in recent_articles %}
+            <a class="recent-article-row" href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                <div class="article-meta">
+                    <span>{{ article.primary_category }}</span>
+                    <time datetime="{{ article.date }}">{{ article.date_label }}</time>
+                </div>
+                <h3>{{ article.title }}</h3>
+                <small>By {{ article.author }}</small>
+            </a>
+        {% endfor %}
+    </aside>
+</section>
+{% endif %}
+
+<section class="latest-articles" aria-labelledby="latest-articles-title">
+    <div class="section-heading">
+        <h2 id="latest-articles-title">Latest Articles</h2>
+        <p>{{ articles|length }} article{{ '' if articles|length == 1 else 's' }}{% if search_query %} matching "{{ search_query }}"{% endif %}</p>
+    </div>
+
+    <div class="article-controls">
+        <nav class="article-filter-pills" aria-label="Article category filters">
+            <a class="{{ 'active' if not selected_category }}" href="{{ url_for('articles', q=search_query) }}">All</a>
+            {% for category in categories %}
+                <a class="{{ 'active' if selected_category == category.slug }}" href="{{ url_for('articles', category=category.slug, q=search_query) }}">{{ category.name }}</a>
+            {% endfor %}
+        </nav>
+        <form class="article-search" action="{{ url_for('articles') }}" method="get">
+            {% if selected_category %}
+                <input type="hidden" name="category" value="{{ selected_category }}">
+            {% endif %}
+            <span aria-hidden="true">&#9906;</span>
+            <input name="q" type="search" value="{{ search_query }}" placeholder="Search articles..." aria-label="Search articles">
+        </form>
+    </div>
+
+    {% if articles %}
+        <div class="article-grid">
+            {% for article in articles %}
+                <a class="article-card" href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                    <img src="{{ article.image_url }}" alt="" loading="lazy">
+                    <div class="article-card-copy">
+                        <div class="article-meta">
+                            <span>{{ article.primary_category }}</span>
+                            <time datetime="{{ article.date }}">{{ article.date_label }}</time>
+                        </div>
+                        <h3>{{ article.title }}</h3>
+                        <small>By {{ article.author }}</small>
+                    </div>
+                </a>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="articles-empty">
+            <h3>No articles found</h3>
+            <p>Try a different search term or clear the selected category.</p>
+            <a href="{{ url_for('articles') }}">Reset filters</a>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}
