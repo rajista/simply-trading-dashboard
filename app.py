@@ -252,6 +252,7 @@ PERSISTENT_CACHE_ENABLED = (
     os.getenv("DISABLE_PERSISTENT_CACHE") != "1"
     and not any("unittest" in arg or "pytest" in arg for arg in sys.argv)
 )
+STOCK_POPUP_DETAILS_LATEST_KEY = "stock_popup_details:latest"
 MAX_ASYNC_POPUP_DETAIL_PREFETCH = 75
 STOCK_DETAIL_WORKERS = int(os.getenv("STOCK_DETAIL_WORKERS", "3"))
 STARTUP_MARKET_REFRESH_DELAY = int(os.getenv("STARTUP_MARKET_REFRESH_DELAY_SECONDS", "10"))
@@ -1926,6 +1927,9 @@ def get_cached_stock_popup_details_snapshot(stocks):
     exact_cache = _read_persistent_cache(f"stock_popup_details:{','.join(popup_symbols)}")
     if exact_cache:
         cached_details.append(exact_cache.get("data", {}).get("details", {}))
+    latest_cache = _read_persistent_cache(STOCK_POPUP_DETAILS_LATEST_KEY)
+    if latest_cache:
+        cached_details.append(latest_cache.get("data", {}).get("details", {}))
     for cached in cached_details:
         for symbol in symbols:
             if symbol in cached:
@@ -1952,7 +1956,12 @@ def refresh_stock_popup_details_cache():
             "data": data,
             "expires": time_module.time() + STOCK_DETAIL_CACHE_TTL,
         }
+        _CACHE[STOCK_POPUP_DETAILS_LATEST_KEY] = {
+            "data": data,
+            "expires": time_module.time() + STOCK_DETAIL_CACHE_TTL,
+        }
     _write_persistent_cache(key, data, STOCK_DETAIL_CACHE_TTL)
+    _write_persistent_cache(STOCK_POPUP_DETAILS_LATEST_KEY, data, STOCK_DETAIL_CACHE_TTL)
     return data
 
 
@@ -2289,6 +2298,10 @@ def get_stock_detail(display_symbol):
     for details in popup_caches:
         if clean_symbol in details:
             return details[clean_symbol]
+    latest_cache = _read_persistent_cache(STOCK_POPUP_DETAILS_LATEST_KEY)
+    latest_details = latest_cache.get("data", {}).get("details", {}) if latest_cache else {}
+    if clean_symbol in latest_details:
+        return latest_details[clean_symbol]
     data, _ = get_cached(
         f"stock_detail:{clean_symbol}",
         STOCK_DETAIL_CACHE_TTL,
@@ -2870,7 +2883,8 @@ def dashboard():
     )
     headlines = headlines or []
     fii_dii = fii_dii or []
-    popup_details = get_cached_stock_popup_details_snapshot(market["rows"])
+    popup_detail_data, popup_details_stale = get_stock_popup_details(market["rows"])
+    popup_details = popup_detail_data.get("details", {}) or get_cached_stock_popup_details_snapshot(market["rows"])
     market = {
         **market,
         "hover_data": build_stock_hover_data_with_details(
@@ -2893,7 +2907,7 @@ def dashboard():
         market=market,
         headlines=headlines,
         market_stale=market_stale,
-        popup_details_stale=False,
+        popup_details_stale=popup_details_stale,
         news_stale=news_stale,
         fii_dii=fii_dii,
         fii_dii_stale=fii_dii_stale,

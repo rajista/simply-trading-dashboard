@@ -56,6 +56,7 @@
     };
     let hideTimer;
     let pinned = false;
+    const detailRequests = new Map();
     const prefersTapPopup = window.matchMedia("(hover: none), (pointer: coarse)").matches;
 
     const signed = (value, digits = 2) => {
@@ -101,6 +102,36 @@
     const setFlag = (element, enabled) => {
         if (!element) return;
         element.classList.toggle("is-on", Boolean(enabled));
+    };
+
+    const hasUsefulDetails = (detail) => {
+        if (!detail || !Object.keys(detail).length) return false;
+        return [
+            "pe_ratio",
+            "revenue",
+            "operating_profit_margin",
+            "roe",
+            "price_to_book",
+            "promoter_holding",
+            "description",
+        ].some((key) => detail[key] !== null && detail[key] !== undefined && detail[key] !== "");
+    };
+
+    const hydrateDetail = (item, target) => {
+        if (hasUsefulDetails(item.details) || detailRequests.has(item.symbol)) return;
+        fields.description.textContent = "Loading company details from cache...";
+        const request = fetch(`/api/stocks/${encodeURIComponent(item.symbol)}`)
+            .then((response) => response.ok ? response.json() : null)
+            .then((detail) => {
+                if (!detail || !Object.keys(detail).length) return;
+                item.details = {...(item.details || {}), ...detail};
+                if (card.classList.contains("is-visible") && fields.symbol.textContent === item.symbol) {
+                    render(target, item);
+                }
+            })
+            .catch(() => null)
+            .finally(() => detailRequests.delete(item.symbol));
+        detailRequests.set(item.symbol, request);
     };
 
     const chartPoints = (series) => {
@@ -196,6 +227,7 @@
         card.scrollTop = 0;
         card.setAttribute("aria-hidden", "false");
         requestAnimationFrame(() => placeCard(target));
+        hydrateDetail(item, target);
     };
 
     const hide = (force = false) => {

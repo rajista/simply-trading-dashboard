@@ -32,6 +32,7 @@ from app import (
     format_volume,
     get_cached,
     get_cached_swr,
+    get_cached_stock_popup_details_snapshot,
     get_market_status,
     _financial_to_inr,
     normalize_deal_frame,
@@ -174,6 +175,15 @@ class DataModelTests(unittest.TestCase):
         hover = build_stock_hover_data_with_details(rows, details)
         self.assertEqual(hover["AAA"]["details"]["roe"], 20)
         self.assertEqual(hover["AAA"]["delivery_percent"], 45)
+
+    def test_popup_snapshot_reads_latest_memory_cache(self):
+        _CACHE.clear()
+        _CACHE["stock_popup_details:latest"] = {
+            "data": {"details": {"AAA": {"pe_ratio": 22, "description": "AAA details"}}},
+            "expires": time.time() + 60,
+        }
+        details = get_cached_stock_popup_details_snapshot([{"display_symbol": "AAA"}])
+        self.assertEqual(details["AAA"]["pe_ratio"], 22)
 
     def test_dashboard_insights_summarize_market_rows(self):
         rows = [
@@ -467,8 +477,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260622-4", html)
-        self.assertIn("/static/js/dashboard.js?v=20260622-4", html)
+        self.assertIn("/static/css/style.css?v=20260622-5", html)
+        self.assertIn("/static/js/dashboard.js?v=20260622-5", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
