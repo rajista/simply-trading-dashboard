@@ -285,12 +285,19 @@ class DataModelTests(unittest.TestCase):
              "accumulation_score": 1, "five_day_change": 5.0, "obv_divergence": True,
              "quiet_pullback": False, "volume_range_signal": False},
         ]
-        insights = build_insights(rows, deal_data)
+        details = {
+            "AAA": {"pe_ratio": 20.5, "price_to_book": 3.2, "roe": 18.5, "roce": 21.0, "debt_equity": 0.2, "dividend_yield": 1.1, "profit_cagr_3y": 14.0},
+            "BBB": {"pe_ratio": 12.0, "price_to_book": 1.4, "roe": 11.0, "roce": 13.0, "debt_equity": 0.5, "dividend_yield": 0.8, "profit_cagr_3y": 8.0},
+        }
+        insights = build_insights(rows, deal_data, details)
         self.assertEqual(insights["accumulation_count"], 2)
         self.assertEqual(insights["uptrend_count"], 1)
         self.assertEqual(insights["near_high_count"], 1)
         self.assertEqual(insights["ranked"][0]["display_symbol"], "AAA")
         self.assertEqual(insights["high_conviction"][0]["display_symbol"], "AAA")
+        self.assertEqual(insights["sector_stock_tables"][0]["sector"], "Tech")
+        self.assertEqual(insights["sector_stock_tables"][0]["members"][0]["detail"]["pe_ratio"], 20.5)
+        self.assertAlmostEqual(insights["sector_stock_tables"][0]["avg_roe"], 14.75)
         self.assertGreater(insights["institutional_accumulation_count"], 0)
         self.assertGreater(insights["rising_short_count"], 0)
         self.assertIn("Tech", insights["top_lines"][0])
@@ -434,8 +441,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260621-3", html)
-        self.assertIn("/static/js/dashboard.js?v=20260621-3", html)
+        self.assertIn("/static/css/style.css?v=20260622-1", html)
+        self.assertIn("/static/js/dashboard.js?v=20260622-1", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
@@ -489,7 +496,6 @@ class RouteTests(unittest.TestCase):
         }
         cached.side_effect = [
             (market, False),
-            ({"details": {}, "fx_warnings": {}, "refreshed_at": None}, False),
             ({}, False),
         ]
         html = self.client.get("/insights").get_data(as_text=True)
@@ -497,9 +503,10 @@ class RouteTests(unittest.TestCase):
         self.assertIn("High-Conviction Watchlist", html)
         self.assertIn("Bulk / block / short data source", html)
         self.assertIn("Accumulation Watch", html)
+        self.assertIn("Sector-Wise Stocks & Financial Metrics", html)
         self.assertIn("AAA", html)
         self.assertIn('class="active" href="/insights">Insights</a>', html)
-        self.assertEqual(cached.call_count, 3)
+        self.assertEqual(cached.call_count, 2)
 
     def test_articles_page_uses_internal_layout_with_filters_and_search(self):
         html = self.client.get("/articles").get_data(as_text=True)

@@ -35,7 +35,7 @@
         {% endfor %}
     </article>
 
-    <article class="panel conviction-table">
+    <article class="panel conviction-table mobile-card-table">
         <h2>High-Conviction Watchlist</h2>
         <div class="table-scroll insight-table-scroll">
             <table>
@@ -43,13 +43,13 @@
                 <tbody>
                 {% for row in insights.high_conviction %}
                     <tr>
-                        <td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
-                        <td>{{ row.sector }}</td>
-                        <td><strong>{{ "%.1f"|format(row.composite_score) }}</strong></td>
-                        <td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td>
-                        <td class="{{ 'positive' if row.five_day_change and row.five_day_change >= 0 else 'negative' if row.five_day_change and row.five_day_change < 0 }}">{{ "%+.2f%%"|format(row.five_day_change) if row.five_day_change is not none else "-" }}</td>
-                        <td><span class="view-pill view-{{ row.analyst_view|lower }}">{{ row.analyst_view }}</span></td>
-                        <td class="insight-detail">
+                        <td data-label="Symbol" class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
+                        <td data-label="Sector">{{ row.sector }}</td>
+                        <td data-label="Score"><strong>{{ "%.1f"|format(row.composite_score) }}</strong></td>
+                        <td data-label="Price">{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td>
+                        <td data-label="5D" class="{{ 'positive' if row.five_day_change and row.five_day_change >= 0 else 'negative' if row.five_day_change and row.five_day_change < 0 }}">{{ "%+.2f%%"|format(row.five_day_change) if row.five_day_change is not none else "-" }}</td>
+                        <td data-label="View"><span class="view-pill view-{{ row.analyst_view|lower }}">{{ row.analyst_view }}</span></td>
+                        <td data-label="Drivers" class="insight-detail">
                             {% for driver in row.drivers %}<span class="positive">{{ driver }}</span>{% endfor %}
                             {% for conflict in row.conflicts %}<span class="negative">{{ conflict }}</span>{% endfor %}
                             {% if not row.drivers and not row.conflicts %}<em>No strong combined signal yet</em>{% endif %}
@@ -63,7 +63,7 @@
         </div>
     </article>
 
-    <article class="panel insights-table">
+    <article class="panel insights-table mobile-card-table">
         <h2>Accumulation Watch</h2>
         <div class="table-scroll insight-table-scroll">
             <table>
@@ -71,12 +71,12 @@
                 <tbody>
                 {% for row in insights.ranked %}
                     <tr>
-                        <td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
-                        <td>{{ row.sector }}</td>
-                        <td>{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td>
-                        <td class="{{ 'positive' if row.five_day_change and row.five_day_change >= 0 else 'negative' if row.five_day_change and row.five_day_change < 0 }}">{{ "%+.2f%%"|format(row.five_day_change) if row.five_day_change is not none else "-" }}</td>
-                        <td><strong>{{ row.accumulation_score }}/3</strong></td>
-                        <td class="signal-tags">
+                        <td data-label="Symbol" class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
+                        <td data-label="Sector">{{ row.sector }}</td>
+                        <td data-label="Price">{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td>
+                        <td data-label="5D %" class="{{ 'positive' if row.five_day_change and row.five_day_change >= 0 else 'negative' if row.five_day_change and row.five_day_change < 0 }}">{{ "%+.2f%%"|format(row.five_day_change) if row.five_day_change is not none else "-" }}</td>
+                        <td data-label="Score"><strong>{{ row.accumulation_score }}/3</strong></td>
+                        <td data-label="Signals" class="signal-tags">
                             {% if row.obv_divergence %}<span>OBV</span>{% endif %}
                             {% if row.quiet_pullback %}<span>Pullback</span>{% endif %}
                             {% if row.volume_range_signal %}<span>Range</span>{% endif %}
@@ -103,18 +103,18 @@
         {% endfor %}
     </article>
 
-    <article class="panel deal-flow-panel">
+    <article class="panel deal-flow-panel mobile-card-table">
         <h2>Sector Deal Flow</h2>
         <table>
             <thead><tr><th>Sector</th><th>Bulk Net 30D</th><th>Block Net 90D</th><th>Short Qty 30D</th><th>Conflicts</th></tr></thead>
             <tbody>
             {% for sector in insights.sector_deal_flow %}
                 <tr>
-                    <td class="link">{{ sector.sector }}</td>
-                    <td class="{{ 'positive' if sector.bulk_net30 >= 0 else 'negative' }}">{{ "Rs " ~ format_market_cap(sector.bulk_net30|abs) }}</td>
-                    <td class="{{ 'positive' if sector.block_net90 >= 0 else 'negative' }}">{{ "Rs " ~ format_market_cap(sector.block_net90|abs) }}</td>
-                    <td>{{ format_volume(sector.short_qty30) }}</td>
-                    <td>{{ sector.conflicts }}</td>
+                    <td data-label="Sector" class="link">{{ sector.sector }}</td>
+                    <td data-label="Bulk 30D" class="{{ 'positive' if sector.bulk_net30 >= 0 else 'negative' }}">{{ "Rs " ~ format_market_cap(sector.bulk_net30|abs) }}</td>
+                    <td data-label="Block 90D" class="{{ 'positive' if sector.block_net90 >= 0 else 'negative' }}">{{ "Rs " ~ format_market_cap(sector.block_net90|abs) }}</td>
+                    <td data-label="Short Qty">{{ format_volume(sector.short_qty30) }}</td>
+                    <td data-label="Conflicts">{{ sector.conflicts }}</td>
                 </tr>
             {% else %}
                 <tr><td colspan="5" class="unavailable">Deal-flow data unavailable</td></tr>
@@ -123,13 +123,55 @@
         </table>
     </article>
 
-    <article class="panel deal-flow-panel">
+    <article class="panel sector-stock-panel mobile-card-table">
+        <h2>Sector-Wise Stocks & Financial Metrics</h2>
+        {% for sector in insights.sector_stock_tables %}
+            <details class="sector-stock-group" {% if loop.index <= 3 %}open{% endif %}>
+                <summary>
+                    <strong>{{ sector.sector }}</strong>
+                    <span>{{ sector.stocks }} stocks</span>
+                    <span>{{ sector.accumulation }} accumulation</span>
+                    <span>{{ sector.uptrend }} uptrend</span>
+                    <span class="{{ 'positive' if sector.avg_change and sector.avg_change >= 0 else 'negative' if sector.avg_change and sector.avg_change < 0 }}">{{ "%+.2f%% avg"|format(sector.avg_change) if sector.avg_change is not none else "- avg" }}</span>
+                    <span>P/E {{ "%.1f"|format(sector.avg_pe) if sector.avg_pe is not none else "-" }}</span>
+                    <span>ROE {{ "%.1f%%"|format(sector.avg_roe) if sector.avg_roe is not none else "-" }}</span>
+                </summary>
+                <div class="table-scroll sector-stock-scroll">
+                    <table>
+                        <thead><tr><th>Symbol</th><th>Price</th><th>5D</th><th>Score</th><th>Signal</th><th>P/E</th><th>P/B</th><th>ROE</th><th>ROCE</th><th>D/E</th><th>Div Yield</th><th>3Y Profit CAGR</th></tr></thead>
+                        <tbody>
+                        {% for row in sector.members %}
+                            <tr>
+                                <td data-label="Symbol" class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
+                                <td data-label="Price">{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td>
+                                <td data-label="5D" class="{{ 'positive' if row.five_day_change and row.five_day_change >= 0 else 'negative' if row.five_day_change and row.five_day_change < 0 }}">{{ "%+.2f%%"|format(row.five_day_change) if row.five_day_change is not none else "-" }}</td>
+                                <td data-label="Score"><strong>{{ row.accumulation_score }}/3</strong> <small>{{ "%.0f"|format(row.composite_score) }}</small></td>
+                                <td data-label="Signal">{{ row.signal }}</td>
+                                <td data-label="P/E">{{ "%.1f"|format(row.detail.get("pe_ratio")) if row.detail.get("pe_ratio") is not none else "-" }}</td>
+                                <td data-label="P/B">{{ "%.2f"|format(row.detail.get("price_to_book")) if row.detail.get("price_to_book") is not none else "-" }}</td>
+                                <td data-label="ROE">{{ "%.1f%%"|format(row.detail.get("roe")) if row.detail.get("roe") is not none else "-" }}</td>
+                                <td data-label="ROCE">{{ "%.1f%%"|format(row.detail.get("roce")) if row.detail.get("roce") is not none else "-" }}</td>
+                                <td data-label="Debt/Eq">{{ "%.2f"|format(row.detail.get("debt_equity")) if row.detail.get("debt_equity") is not none else "-" }}</td>
+                                <td data-label="Div Yield">{{ "%.2f%%"|format(row.detail.get("dividend_yield")) if row.detail.get("dividend_yield") is not none else "-" }}</td>
+                                <td data-label="3Y Profit CAGR">{{ "%.1f%%"|format(row.detail.get("profit_cagr_3y")) if row.detail.get("profit_cagr_3y") is not none else "-" }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        {% else %}
+            <div class="unavailable">Sector-wise stock metrics are unavailable in the current cache.</div>
+        {% endfor %}
+    </article>
+
+    <article class="panel deal-flow-panel mobile-card-table">
         <h2>Bulk Deal Net Buying</h2>
         <table>
             <thead><tr><th>Symbol</th><th>30D Net</th><th>Trades</th><th>Signal</th></tr></thead>
             <tbody>
             {% for row in insights.bulk_buy_leaders %}
-                <tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td class="positive">Rs {{ format_market_cap(row.deal.bulk_net30) }}</td><td>{{ row.deal.bulk_trades30 }}</td><td>{{ row.analyst_view }}</td></tr>
+                <tr><td data-label="Symbol" class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td data-label="30D Net" class="positive">Rs {{ format_market_cap(row.deal.bulk_net30) }}</td><td data-label="Trades">{{ row.deal.bulk_trades30 }}</td><td data-label="Signal">{{ row.analyst_view }}</td></tr>
             {% else %}
                 <tr><td colspan="4" class="unavailable">No tracked bulk net buying found</td></tr>
             {% endfor %}
@@ -137,13 +179,13 @@
         </table>
     </article>
 
-    <article class="panel deal-flow-panel">
+    <article class="panel deal-flow-panel mobile-card-table">
         <h2>Bulk Deal Net Selling</h2>
         <table>
             <thead><tr><th>Symbol</th><th>30D Net</th><th>Trades</th><th>Conflict</th></tr></thead>
             <tbody>
             {% for row in insights.bulk_sell_leaders %}
-                <tr><td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td class="negative">Rs {{ format_market_cap(row.deal.bulk_net30|abs) }}</td><td>{{ row.deal.bulk_trades30 }}</td><td>{{ row.conflicts[0] if row.conflicts else "Watch supply" }}</td></tr>
+                <tr><td data-label="Symbol" class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td><td data-label="30D Net" class="negative">Rs {{ format_market_cap(row.deal.bulk_net30|abs) }}</td><td data-label="Trades">{{ row.deal.bulk_trades30 }}</td><td data-label="Conflict">{{ row.conflicts[0] if row.conflicts else "Watch supply" }}</td></tr>
             {% else %}
                 <tr><td colspan="4" class="unavailable">No tracked bulk net selling found</td></tr>
             {% endfor %}
@@ -151,17 +193,17 @@
         </table>
     </article>
 
-    <article class="panel deal-flow-panel">
+    <article class="panel deal-flow-panel mobile-card-table">
         <h2>Short-Selling Pressure</h2>
         <table>
             <thead><tr><th>Symbol</th><th>30D Qty</th><th>30D Trend</th><th>Price Signal</th></tr></thead>
             <tbody>
             {% for row in insights.short_pressure %}
                 <tr>
-                    <td class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
-                    <td>{{ format_volume(row.deal.short_qty30) }}</td>
-                    <td class="{{ 'negative' if row.deal.short_change >= 40 else 'positive' if row.deal.short_change <= -20 else '' }}">{{ "%+.1f%%"|format(row.deal.short_change) }}</td>
-                    <td>{{ row.signal }}</td>
+                    <td data-label="Symbol" class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
+                    <td data-label="30D Qty">{{ format_volume(row.deal.short_qty30) }}</td>
+                    <td data-label="30D Trend" class="{{ 'negative' if row.deal.short_change >= 40 else 'positive' if row.deal.short_change <= -20 else '' }}">{{ "%+.1f%%"|format(row.deal.short_change) }}</td>
+                    <td data-label="Price Signal">{{ row.signal }}</td>
                 </tr>
             {% else %}
                 <tr><td colspan="4" class="unavailable">No tracked short-selling pressure found</td></tr>

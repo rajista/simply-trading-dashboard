@@ -1757,6 +1757,29 @@ def get_stock_popup_details(stocks):
     return data or {"details": {}, "fx_warnings": {}, "refreshed_at": None}, stale
 
 
+def get_cached_stock_popup_details_snapshot(stocks):
+    """Return already-built popup details without starting a refresh."""
+    symbols = {
+        _normalize_symbol(stock.get("display_symbol") or stock.get("symbol"))
+        for stock in stocks or []
+        if stock.get("display_symbol") or stock.get("symbol")
+    }
+    if not symbols:
+        return {}
+    details = {}
+    with _CACHE_LOCK:
+        cached_details = [
+            value.get("data", {}).get("details", {})
+            for key, value in _CACHE.items()
+            if key.startswith("stock_popup_details:")
+        ]
+    for cached in cached_details:
+        for symbol in symbols:
+            if symbol in cached:
+                details[symbol] = cached[symbol]
+    return details
+
+
 def _stock_detail_universe_keys():
     stocks, _ = get_stock_universe()
     broad_stocks, _ = get_nifty500_universe()
@@ -1868,12 +1891,14 @@ def _format_driver_value(value):
     return format_market_cap(abs(value)) if value else "0"
 
 
-def build_insights(rows, deal_data=None):
+def build_insights(rows, deal_data=None, details=None):
     rows = rows or []
     deal_data = deal_data or {}
+    details = details or {}
     deal_end_date = _deal_data_latest_date(deal_data)
     enriched_rows = []
     for row in rows:
+        detail = details.get(_normalize_symbol(row.get("display_symbol") or row.get("symbol")), {})
         deal = _deal_summary_for_symbol(row.get("display_symbol"), deal_data, deal_end_date)
         drivers = []
         conflicts = []
@@ -1915,6 +1940,7 @@ def build_insights(rows, deal_data=None):
             {
                 **row,
                 "deal": deal,
+                "detail": detail,
                 "drivers": drivers[:5],
                 "conflicts": conflicts[:4],
                 "composite_score": round(composite_score, 1),
@@ -1938,6 +1964,7 @@ def build_insights(rows, deal_data=None):
     high_conviction = sorted(enriched_rows, key=lambda row: row["composite_score"], reverse=True)[:18]
     sector_totals = defaultdict(lambda: {"sector": "", "total": 0, "accumulation": 0})
     sector_flow = defaultdict(lambda: {"sector": "", "bulk_net30": 0.0, "block_net90": 0.0, "short_qty30": 0.0, "stocks": 0, "aligned": 0, "conflicts": 0})
+    sector_members = defaultdict(list)
     for row in enriched_rows:
         sector = row.get("sector") or "Other"
         sector_totals[sector]["sector"] = sector
@@ -1951,6 +1978,7 @@ def build_insights(rows, deal_data=None):
         sector_flow[sector]["stocks"] += 1
         sector_flow[sector]["aligned"] += 1 if row["analyst_view"] == "Aligned" else 0
         sector_flow[sector]["conflicts"] += len(row["conflicts"])
+        sector_members[sector].append(row)
     sectors = sorted(
         sector_totals.values(),
         key=lambda item: (item["accumulation"], item["total"]),
@@ -1982,6 +2010,51 @@ def build_insights(rows, deal_data=None):
         row for row in enriched_rows
         if row["deal"]["bulk_net30"] > 0 and row["deal"]["block_net90"] >= 0 and (row.get("accumulation_score") or 0) >= 1
     ]
+    def _average_detail_metric(members, key):
+        values = []
+        for member in members:
+            value = member.get("detail", {}).get(key)
+            if value is not None:
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(value):
+                    values.append(value)
+        return sum(values) / len(values) if values else None
+
+    sector_stock_tables = []
+    for sector, members in sector_members.items():
+        ordered_members = sorted(
+            members,
+            key=lambda row: (
+                row.get("composite_score", 0),
+                row.get("accumulation_score") or 0,
+                row.get("five_day_change") if row.get("five_day_change") is not None else -999,
+            ),
+            reverse=True,
+        )
+        sector_stock_tables.append(
+            {
+                "sector": sector,
+                "stocks": len(members),
+                "accumulation": len([row for row in members if (row.get("accumulation_score") or 0) >= 2]),
+                "uptrend": len([row for row in members if row.get("signal") == "Uptrend"]),
+                "avg_change": (
+                    sum(row.get("percent", 0) or 0 for row in members) / len(members)
+                    if members else None
+                ),
+                "avg_pe": _average_detail_metric(members, "pe_ratio"),
+                "avg_roe": _average_detail_metric(members, "roe"),
+                "avg_roce": _average_detail_metric(members, "roce"),
+                "members": ordered_members,
+            }
+        )
+    sector_stock_tables = sorted(
+        sector_stock_tables,
+        key=lambda item: (item["accumulation"], item["uptrend"], item["stocks"]),
+        reverse=True,
+    )
     high_conviction_count = len([row for row in enriched_rows if row["composite_score"] >= 40])
     rising_short_count = len([row for row in enriched_rows if row["deal"]["short_qty30"] > 0 and row["deal"]["short_change"] >= 40])
     if sector_deal_flow and (abs(sector_deal_flow[0]["bulk_net30"]) + abs(sector_deal_flow[0]["block_net90"])) > 0:
@@ -2014,6 +2087,7 @@ def build_insights(rows, deal_data=None):
         "bulk_sell_leaders": [row for row in bulk_sell_leaders if row["deal"]["bulk_net30"] < 0],
         "short_pressure": [row for row in short_pressure if row["deal"]["short_qty30"] > 0],
         "sector_deal_flow": sector_deal_flow,
+        "sector_stock_tables": sector_stock_tables,
         "sectors": sectors,
         "top_lines": top_lines,
         "deal_meta": {
@@ -2518,23 +2592,23 @@ def dashboard():
 def insights():
     market_context = load_cached_market_context()
     market = market_context["market"]
-    popup_detail_data, popup_details_stale = get_stock_popup_details(market["rows"])
+    popup_details = get_cached_stock_popup_details_snapshot(market["rows"])
     market = {
         **market,
         "hover_data": build_stock_hover_data_with_details(
             market["rows"],
-            popup_detail_data.get("details", {}),
+            popup_details,
         ),
     }
     deal_data, deal_data_stale = get_bulk_block_short_data()
-    insight_data = build_insights(market["rows"], deal_data or {})
+    insight_data = build_insights(market["rows"], deal_data or {}, popup_details)
     return render_template(
         "insights.html",
         **common_context("insights", False),
         market=market,
         insights=insight_data,
         market_stale=market_context["market_stale"],
-        popup_details_stale=popup_details_stale,
+        popup_details_stale=False,
         deal_data_stale=deal_data_stale,
         constituents_stale=market_context["constituents_stale"],
         format_market_cap=format_market_cap,
