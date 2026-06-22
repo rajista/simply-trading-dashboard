@@ -4,11 +4,14 @@ import csv
 from datetime import date, datetime, time, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
+import hashlib
 from io import StringIO
 import math
 import os
 from pathlib import Path
+import pickle
 import re
+import sys
 import threading
 import time as time_module
 from urllib.parse import quote
@@ -238,12 +241,21 @@ ARTICLE_POSTS_SOURCE = [
     },
 ]
 MARKET_CACHE_TTL = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "1200"))
+HISTORY_CACHE_TTL = int(os.getenv("HISTORY_CACHE_TTL_SECONDS", "21600"))
 NEWS_CACHE_TTL = 900
 CALENDAR_CACHE_TTL = 21600
 CONSTITUENT_CACHE_TTL = 86400
 BULK_BLOCK_CACHE_TTL = 24 * 60 * 60
 STOCK_DETAIL_CACHE_TTL = 24 * 60 * 60
+CACHE_DIR = Path(os.getenv("APP_CACHE_DIR", Path(__file__).resolve().parent / ".runtime_cache"))
+PERSISTENT_CACHE_ENABLED = (
+    os.getenv("DISABLE_PERSISTENT_CACHE") != "1"
+    and not any("unittest" in arg or "pytest" in arg for arg in sys.argv)
+)
 MAX_ASYNC_POPUP_DETAIL_PREFETCH = 75
+STOCK_DETAIL_WORKERS = int(os.getenv("STOCK_DETAIL_WORKERS", "3"))
+STARTUP_MARKET_REFRESH_DELAY = int(os.getenv("STARTUP_MARKET_REFRESH_DELAY_SECONDS", "10"))
+STARTUP_STOCK_DETAIL_REFRESH_DELAY = int(os.getenv("STARTUP_STOCK_DETAIL_REFRESH_DELAY_SECONDS", "300"))
 REPORTED_FINANCIAL_OVERRIDES = {
     "INFY": {
         "period": "2026-03-31",
@@ -256,6 +268,46 @@ _CACHE_LOCK = threading.Lock()
 _CACHE_REFRESHING = set()
 _BULK_BLOCK_REFRESH_STARTED = False
 _STOCK_DETAIL_REFRESH_STARTED = False
+_MARKET_REFRESH_STARTED = False
+
+
+def _cache_file_path(key):
+    digest = hashlib.sha256(key.encode("utf-8", errors="ignore")).hexdigest()
+    return CACHE_DIR / f"{digest}.pickle"
+
+
+def _read_persistent_cache(key):
+    if not PERSISTENT_CACHE_ENABLED:
+        return None
+    path = _cache_file_path(key)
+    try:
+        if not path.exists():
+            return None
+        with path.open("rb") as handle:
+            entry = pickle.load(handle)
+        if not isinstance(entry, dict) or "data" not in entry or "expires" not in entry:
+            return None
+        return entry
+    except Exception:
+        return None
+
+
+def _write_persistent_cache(key, data, ttl):
+    if not PERSISTENT_CACHE_ENABLED:
+        return
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "data": data,
+            "expires": time_module.time() + ttl,
+            "written_at": datetime.now(IST).isoformat(),
+        }
+        tmp_path = _cache_file_path(key).with_suffix(f".{threading.get_ident()}.tmp")
+        with tmp_path.open("wb") as handle:
+            pickle.dump(entry, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp_path.replace(_cache_file_path(key))
+    except Exception:
+        pass
 
 
 def article_slug(value):
@@ -533,6 +585,7 @@ def get_stock_universe():
         "nifty50_constituents",
         CONSTITUENT_CACHE_TTL,
         fetch_nifty50_constituents,
+        cold_async=True,
     )
     return (universe or STOCKS), stale
 
@@ -542,6 +595,7 @@ def get_nifty500_universe():
         "nifty500_constituents",
         CONSTITUENT_CACHE_TTL,
         fetch_nifty500_constituents,
+        cold_async=True,
     )
     return (universe or STOCKS), stale
 
@@ -596,12 +650,20 @@ def get_cached(key, ttl, loader, now=None):
         cached = _CACHE.get(key)
         if cached and cached["expires"] > current:
             return cached["data"], False
+    if not cached:
+        cached = _read_persistent_cache(key)
+        if cached:
+            with _CACHE_LOCK:
+                _CACHE[key] = cached
+            if cached["expires"] > current:
+                return cached["data"], False
     try:
         data = loader()
         if data is None:
             raise ValueError("Loader returned no data")
         with _CACHE_LOCK:
             _CACHE[key] = {"data": data, "expires": current + ttl}
+        _write_persistent_cache(key, data, ttl)
         return data, False
     except Exception:
         if cached:
@@ -619,6 +681,7 @@ def _refresh_cached_value(key, ttl, loader):
                 "data": data,
                 "expires": time_module.time() + ttl,
             }
+        _write_persistent_cache(key, data, ttl)
     except Exception:
         pass
     finally:
@@ -632,6 +695,17 @@ def get_cached_swr(key, ttl, loader, now=None, cold_async=False):
     should_refresh = False
     with _CACHE_LOCK:
         cached = _CACHE.get(key)
+        if cached and cached["expires"] > current:
+            return cached["data"], False
+    if not cached:
+        cached = _read_persistent_cache(key)
+        if cached:
+            with _CACHE_LOCK:
+                _CACHE[key] = cached
+            if cached["expires"] > current:
+                return cached["data"], False
+            current = time_module.time() if now is None else now
+    with _CACHE_LOCK:
         if cached and cached["expires"] > current:
             return cached["data"], False
         refreshing = key in _CACHE_REFRESHING
@@ -1457,6 +1531,7 @@ def refresh_bulk_block_short_cache_from_nse():
             "data": data,
             "expires": time_module.time() + BULK_BLOCK_CACHE_TTL,
         }
+    _write_persistent_cache("bulk_block_short_data", data, BULK_BLOCK_CACHE_TTL)
     return data
 
 
@@ -1777,7 +1852,7 @@ def fetch_all_stock_popup_details(stocks):
     details = {}
     fx_warnings = {}
     if stocks:
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, STOCK_DETAIL_WORKERS)) as executor:
             futures = {executor.submit(_build_stock_detail_from_ticker, stock, fx_warnings): stock for stock in stocks}
             for future in as_completed(futures):
                 stock = futures[future]
@@ -1824,6 +1899,11 @@ def get_stock_popup_details(stocks):
 
 def get_cached_stock_popup_details_snapshot(stocks):
     """Return already-built popup details without starting a refresh."""
+    popup_symbols = [
+        stock.get("symbol") or f"{stock.get('display_symbol', '')}.NS"
+        for stock in stocks or []
+        if stock.get("symbol") or stock.get("display_symbol")
+    ]
     symbols = {
         _normalize_symbol(stock.get("display_symbol") or stock.get("symbol"))
         for stock in stocks or []
@@ -1843,6 +1923,9 @@ def get_cached_stock_popup_details_snapshot(stocks):
             for key, value in _CACHE.items()
             if key.startswith("stock_detail:")
         }
+    exact_cache = _read_persistent_cache(f"stock_popup_details:{','.join(popup_symbols)}")
+    if exact_cache:
+        cached_details.append(exact_cache.get("data", {}).get("details", {}))
     for cached in cached_details:
         for symbol in symbols:
             if symbol in cached:
@@ -1869,10 +1952,17 @@ def refresh_stock_popup_details_cache():
             "data": data,
             "expires": time_module.time() + STOCK_DETAIL_CACHE_TTL,
         }
+    _write_persistent_cache(key, data, STOCK_DETAIL_CACHE_TTL)
     return data
 
 
 def _stock_detail_refresh_loop():
+    if os.getenv("DISABLE_STARTUP_STOCK_DETAIL_REFRESH") != "1":
+        time_module.sleep(max(0, STARTUP_STOCK_DETAIL_REFRESH_DELAY))
+        try:
+            refresh_stock_popup_details_cache()
+        except Exception:
+            pass
     while True:
         time_module.sleep(seconds_until_next_ist_midnight() + 900)
         try:
@@ -2262,14 +2352,25 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
     all_stocks = merge_stock_lists(stocks, broad_stocks)
     quotes, _ = get_market_quotes(stocks)
     quotes = quotes or {}
-    index_history = fetch_index_history()
+    index_history, _ = get_cached_swr(
+        "index_history:5d:15m",
+        MARKET_CACHE_TTL,
+        fetch_index_history,
+    )
+    index_history = index_history if isinstance(index_history, pd.DataFrame) else pd.DataFrame()
     nse_index_cards = {}
     nse_snapshot = None
     try:
         nse_index_cards, nse_snapshot = fetch_nse_index_cards()
     except Exception:
         nse_index_cards, nse_snapshot = {}, None
-    stock_history = fetch_stock_history(all_stocks)
+    history_key = "stock_history:1y:1d:" + ",".join(stock["symbol"] for stock in all_stocks)
+    stock_history, _ = get_cached_swr(
+        history_key,
+        HISTORY_CACHE_TTL,
+        lambda: fetch_stock_history(all_stocks),
+    )
+    stock_history = stock_history if isinstance(stock_history, pd.DataFrame) else pd.DataFrame()
     all_rows = build_stock_rows(quotes, stock_history, all_stocks)
     rows_by_symbol = {row["symbol"]: row for row in all_rows}
     rows = [rows_by_symbol[stock["symbol"]] for stock in stocks if stock["symbol"] in rows_by_symbol]
@@ -2621,12 +2722,52 @@ def empty_market_dashboard():
     }
 
 
+def market_dashboard_cache_key(stocks, broad_stocks):
+    universe_key = ",".join(stock["symbol"] for stock in stocks)
+    broad_universe_key = ",".join(stock["symbol"] for stock in broad_stocks)
+    return f"market:{universe_key}|broad:{broad_universe_key}", universe_key
+
+
+def refresh_market_dashboard_cache():
+    stocks, _ = get_stock_universe()
+    broad_stocks, _ = get_nifty500_universe()
+    key, _ = market_dashboard_cache_key(stocks, broad_stocks)
+    data = load_market_dashboard(stocks, broad_stocks, allow_impact_fallback=True)
+    with _CACHE_LOCK:
+        _CACHE[key] = {
+            "data": data,
+            "expires": time_module.time() + MARKET_CACHE_TTL,
+        }
+    _write_persistent_cache(key, data, MARKET_CACHE_TTL)
+    return data
+
+
+def _market_refresh_loop():
+    time_module.sleep(max(0, STARTUP_MARKET_REFRESH_DELAY))
+    while True:
+        try:
+            refresh_market_dashboard_cache()
+        except Exception:
+            pass
+        time_module.sleep(max(60, MARKET_CACHE_TTL))
+
+
+def start_market_refresh_scheduler():
+    global _MARKET_REFRESH_STARTED
+    if _MARKET_REFRESH_STARTED or os.getenv("DISABLE_MARKET_REFRESH") == "1":
+        return
+    _MARKET_REFRESH_STARTED = True
+    threading.Thread(
+        target=_market_refresh_loop,
+        daemon=True,
+        name="market-dashboard-refresh",
+    ).start()
+
+
 def load_cached_market_context():
     stocks, constituents_stale = get_stock_universe()
     broad_stocks, broad_constituents_stale = get_nifty500_universe()
-    universe_key = ",".join(stock["symbol"] for stock in stocks)
-    broad_universe_key = ",".join(stock["symbol"] for stock in broad_stocks)
-    market_key = f"market:{universe_key}|broad:{broad_universe_key}"
+    market_key, universe_key = market_dashboard_cache_key(stocks, broad_stocks)
     with _CACHE_LOCK:
         has_cached_market = market_key in _CACHE
     market, market_stale = get_cached_swr(
@@ -2729,12 +2870,12 @@ def dashboard():
     )
     headlines = headlines or []
     fii_dii = fii_dii or []
-    popup_detail_data, popup_details_stale = get_stock_popup_details(market["rows"])
+    popup_details = get_cached_stock_popup_details_snapshot(market["rows"])
     market = {
         **market,
         "hover_data": build_stock_hover_data_with_details(
             market["rows"],
-            popup_detail_data.get("details", {}),
+            popup_details,
         ),
     }
     calendar = build_calendar_panels(calendar_entries or [])
@@ -2752,7 +2893,7 @@ def dashboard():
         market=market,
         headlines=headlines,
         market_stale=market_stale,
-        popup_details_stale=popup_details_stale,
+        popup_details_stale=False,
         news_stale=news_stale,
         fii_dii=fii_dii,
         fii_dii_stale=fii_dii_stale,
@@ -2837,8 +2978,16 @@ def screener():
     )
 
 
-start_bulk_block_refresh_scheduler()
-start_stock_detail_refresh_scheduler()
+def should_start_background_jobs():
+    if os.getenv("DISABLE_BACKGROUND_REFRESH") == "1":
+        return False
+    return not any("unittest" in arg or "pytest" in arg for arg in sys.argv)
+
+
+if should_start_background_jobs():
+    start_bulk_block_refresh_scheduler()
+    start_stock_detail_refresh_scheduler()
+    start_market_refresh_scheduler()
 
 
 if __name__ == "__main__":
