@@ -543,6 +543,76 @@ a { color: inherit; }
     grid-template-columns: minmax(0, 2.35fr) minmax(310px, .95fr);
     gap: 12px 16px;
 }
+.dashboard-insights {
+    margin: 0 0 12px;
+    padding: 10px;
+    border-color: rgba(74, 168, 255, .45);
+    background:
+        linear-gradient(135deg, rgba(74, 168, 255, .12), rgba(0, 200, 117, .07)),
+        var(--panel);
+}
+.dashboard-insights header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.dashboard-insights header span {
+    color: #f6c85f;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+.dashboard-insights h2 {
+    margin: 1px 0 0;
+    color: #f4f7ff;
+    font-size: 15px;
+}
+.dashboard-insights header strong {
+    color: #aeb7ca;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+.insight-chip-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 7px;
+}
+.insight-chip {
+    grid-column: span 2;
+    min-height: 64px;
+    display: grid;
+    align-content: center;
+    gap: 3px;
+    padding: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 6px;
+    background: #1a202b;
+}
+.insight-chip small {
+    overflow: hidden;
+    color: rgba(255, 255, 255, .72);
+    font-size: 8px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.insight-chip b {
+    overflow: hidden;
+    color: #fff;
+    font-size: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.insight-chip span { color: rgba(255, 255, 255, .74); font-size: 10px; }
+.tone-good { background: linear-gradient(135deg, rgba(0, 200, 117, .34), rgba(18, 28, 36, .95)); }
+.tone-bad { background: linear-gradient(135deg, rgba(255, 91, 107, .32), rgba(30, 24, 32, .95)); }
+.tone-accent { background: linear-gradient(135deg, rgba(74, 168, 255, .34), rgba(22, 28, 43, .95)); }
+.tone-warm { background: linear-gradient(135deg, rgba(246, 200, 95, .34), rgba(34, 29, 24, .95)); }
 .dashboard-grid > .panel { min-width: 0; overflow: hidden; }
 .dashboard-grid h2 {
     margin: 0;
@@ -718,7 +788,7 @@ tbody tr:hover { background: #2a303d; }
     padding: 0 12px 12px;
     background: #202632;
 }
-.growth-grid, .fund-grid, .range-grid, .advanced-grid {
+.growth-grid, .fund-grid, .range-grid, .advanced-grid, .ownership-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1px;
@@ -728,8 +798,9 @@ tbody tr:hover { background: #2a303d; }
 }
 .fund-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .range-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.advanced-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.growth-grid span, .fund-grid span, .range-grid span, .advanced-grid span {
+.advanced-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ownership-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); border: 0; background: transparent; gap: 5px; }
+.growth-grid span, .fund-grid span, .range-grid span, .advanced-grid span, .ownership-grid span {
     display: grid;
     gap: 2px;
     padding: 6px;
@@ -738,13 +809,25 @@ tbody tr:hover { background: #2a303d; }
     font-size: 9px;
     text-transform: uppercase;
 }
-.growth-grid b, .fund-grid b, .range-grid b, .advanced-grid b {
+.ownership-grid span {
+    min-height: 52px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 5px;
+    color: rgba(255, 255, 255, .82);
+}
+.growth-grid b, .fund-grid b, .range-grid b, .advanced-grid b, .ownership-grid b {
     overflow: hidden;
     color: var(--text);
     font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.ownership-grid b { color: #fff; font-size: 12px; }
+.owner-promoter { background: linear-gradient(135deg, rgba(246, 200, 95, .34), rgba(27, 32, 42, .96)) !important; }
+.owner-fii { background: linear-gradient(135deg, rgba(74, 168, 255, .34), rgba(27, 32, 42, .96)) !important; }
+.owner-dii { background: linear-gradient(135deg, rgba(0, 200, 117, .28), rgba(27, 32, 42, .96)) !important; }
+.owner-retail { background: linear-gradient(135deg, rgba(181, 126, 255, .30), rgba(27, 32, 42, .96)) !important; }
+.owner-total { background: linear-gradient(135deg, rgba(255, 91, 107, .24), rgba(27, 32, 42, .96)) !important; }
 .accumulation-box {
     display: grid;
     grid-template-columns: 1fr repeat(3, auto);
@@ -1145,6 +1228,7 @@ tbody tr:hover { background: #2a303d; }
     .article-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .breadth-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 0 0 12px; }
     .dashboard-grid { grid-template-columns: 1fr 1fr; }
+    .insight-chip { grid-column: span 3; }
     .insights-grid { grid-template-columns: 1fr; }
     .market-tables, .headlines, .market-stats { grid-column: 1 / -1; }
     .fii-dii-panel { grid-column: 1 / -1; }
@@ -1187,6 +1271,9 @@ tbody tr:hover { background: #2a303d; }
     .article-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
     .article-card { min-height: 0; border-radius: 14px; }
     .index-grid, .breadth-grid, .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+    .dashboard-insights header { align-items: start; flex-direction: column; gap: 4px; }
+    .insight-chip-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .insight-chip { grid-column: span 1; }
     .market-tables { grid-template-columns: 1fr; }
     .heatmap { min-height: 420px; }
     .heatmap-groups { height: 380px; }
@@ -1275,7 +1362,7 @@ tbody tr:hover { background: #2a303d; }
         min-width: 0;
     }
     .deal-meta { flex-direction: column; gap: 4px; }
-    .range-grid, .growth-grid, .fund-grid, .advanced-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .range-grid, .growth-grid, .fund-grid, .advanced-grid, .ownership-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .accumulation-box { grid-template-columns: 1fr; }
     .sector-bar-row { grid-template-columns: 1fr; }
     .ticker-hover-card.is-mobile-popup {

@@ -13,6 +13,7 @@ from app import (
     build_breadth,
     build_candles,
     build_calendar_panels,
+    build_dashboard_insights,
     build_heatmap,
     build_insights,
     build_sector_performance,
@@ -88,6 +89,12 @@ SAMPLE_MARKET = {
     },
     "internals": {
         "above_sma50": 0, "above_sma200": 0, "near_high": 0, "volume_surge": 0,
+    },
+    "insights": {
+        "momentum": [],
+        "risk": [],
+        "leadership": [],
+        "participation": [],
     },
 }
 
@@ -166,6 +173,21 @@ class DataModelTests(unittest.TestCase):
         hover = build_stock_hover_data_with_details(rows, details)
         self.assertEqual(hover["AAA"]["details"]["roe"], 20)
         self.assertEqual(hover["AAA"]["delivery_percent"], 45)
+
+    def test_dashboard_insights_summarize_market_rows(self):
+        rows = [
+            {"display_symbol": "AAA", "sector": "Tech", "price": 100, "percent": 3.0,
+             "signal": "Uptrend", "accumulation_score": 2, "volume_change": 30,
+             "high52": 102, "low52": 80, "market_cap": 10, "volume": 100},
+            {"display_symbol": "BBB", "sector": "Bank", "price": 70, "percent": -2.0,
+             "signal": "Downtrend", "accumulation_score": 0, "volume_change": -5,
+             "high52": 110, "low52": 68, "market_cap": 10, "volume": 100},
+        ]
+        insights = build_dashboard_insights(rows, rows[:1])
+        self.assertEqual(insights["momentum"][0]["value"], 1)
+        self.assertEqual(insights["risk"][0]["value"], 1)
+        self.assertEqual(insights["leadership"][0]["value"], "AAA")
+        self.assertEqual(insights["participation"][0]["detail"], "50.0%")
 
     def test_breadth_and_heatmap(self):
         rows = [
@@ -441,11 +463,14 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260622-1", html)
-        self.assertIn("/static/js/dashboard.js?v=20260622-1", html)
+        self.assertIn("/static/css/style.css?v=20260622-3", html)
+        self.assertIn("/static/js/dashboard.js?v=20260622-3", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
+        self.assertIn("Dashboard Insights", html)
+        self.assertIn("Operating Margin", html)
+        self.assertIn("Retail", html)
         self.assertIn("NIFTY 500", html)
         self.assertIn("sector-toggle", html)
         self.assertIn('class="option-chain-promo" href="https://trading-simplified.com/option-chain-analysis/"', html)

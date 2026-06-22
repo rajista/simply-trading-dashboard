@@ -243,6 +243,7 @@ CALENDAR_CACHE_TTL = 21600
 CONSTITUENT_CACHE_TTL = 86400
 BULK_BLOCK_CACHE_TTL = 24 * 60 * 60
 STOCK_DETAIL_CACHE_TTL = 24 * 60 * 60
+MAX_ASYNC_POPUP_DETAIL_PREFETCH = 75
 REPORTED_FINANCIAL_OVERRIDES = {
     "INFY": {
         "period": "2026-03-31",
@@ -669,6 +670,14 @@ def _parse_number(value):
         return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
+
+
+def _first_number(*values):
+    for value in values:
+        number = _parse_number(value)
+        if number is not None:
+            return number
+    return None
 
 
 def get_market_quotes(stocks):
@@ -1652,6 +1661,31 @@ def _major_holder_value(frame, label):
         return None
 
 
+def _holder_percent_from_info(info, *keys):
+    for key in keys:
+        value = _percent_from_info(info, key)
+        if value is not None:
+            return value
+    return None
+
+
+def _infer_retail_holding(promoter, fii, dii):
+    known = [value for value in (promoter, fii, dii) if value is not None]
+    if not known:
+        return None
+    retail = 100 - sum(known)
+    return max(0, min(100, retail))
+
+
+def _change_label(current, previous):
+    if current is None or previous is None:
+        return None
+    change = current - previous
+    if abs(change) < 0.05:
+        return "flat"
+    return f"{change:+.1f}pp"
+
+
 def _build_stock_detail_from_ticker(stock, fx_warnings=None):
     symbol = stock["symbol"]
     display_symbol = symbol.removesuffix(".NS")
@@ -1684,20 +1718,45 @@ def _build_stock_detail_from_ticker(stock, fx_warnings=None):
         }
     promoter_holding = _major_holder_value(major_holders, "insidersPercentHeld")
     institutional_holding = _major_holder_value(major_holders, "institutionsPercentHeld")
+    fii_holding = _holder_percent_from_info(info, "heldPercentInstitutions", "institutionsPercentHeld")
+    dii_holding = _holder_percent_from_info(info, "heldPercentMutualFunds", "fundsPercentHeld")
+    retail_holding = _infer_retail_holding(promoter_holding, fii_holding, dii_holding)
+    operating_income = _statement_value(financials, ["Operating Income", "EBIT"], latest_period)
+    operating_income_inr = _financial_to_inr(operating_income, financial_currency, latest_period)
+    total_debt = _first_number(info.get("totalDebt"))
+    if total_debt is None:
+        total_debt = _statement_value(
+            balance_sheet,
+            ["Total Debt", "Long Term Debt And Capital Lease Obligation", "Long Term Debt"],
+            _latest_statement_column(balance_sheet),
+        )
+        total_debt = _financial_to_inr(total_debt, financial_currency, _latest_statement_column(balance_sheet))
     return {
         "symbol": display_symbol,
         "pe_ratio": _parse_number(info.get("trailingPE")) or _parse_number(info.get("forwardPE")),
         "revenue": revenue_inr,
         "revenue_currency": "INR" if revenue_inr is not None else None,
         "pat_margin": (net_income_inr / revenue_inr * 100) if revenue_inr and net_income_inr else _percent_from_info(info, "profitMargins"),
+        "operating_profit_margin": (
+            operating_income_inr / revenue_inr * 100
+            if revenue_inr and operating_income_inr is not None
+            else _percent_from_info(info, "operatingMargins")
+        ),
         "roe": _percent_from_info(info, "returnOnEquity"),
         "roce": _compute_roce(financials, balance_sheet),
         "price_to_book": _parse_number(info.get("priceToBook")),
         "profit_cagr_3y": _profit_cagr_3y(financials),
         "avg_pe_3y": _average_pe_3y(financials, info, financial_currency),
         "debt_equity": _ratio_from_percent(info.get("debtToEquity")),
+        "total_debt": total_debt,
         "promoter_holding": promoter_holding,
-        "promoter_trend": None,
+        "promoter_trend": _change_label(promoter_holding, None),
+        "fii_holding": fii_holding,
+        "fii_trend": None,
+        "dii_holding": dii_holding,
+        "dii_trend": None,
+        "retail_holding": retail_holding,
+        "retail_trend": None,
         "fii_dii_holding": institutional_holding,
         "fii_dii_trend": None,
         "dividend_yield": _parse_number(info.get("dividendYield")),
@@ -1744,6 +1803,12 @@ def get_stock_popup_details(stocks):
         for stock in stocks
         if stock.get("symbol") or stock.get("display_symbol")
     ]
+    if len(symbols) > MAX_ASYNC_POPUP_DETAIL_PREFETCH:
+        return {
+            "details": get_cached_stock_popup_details_snapshot(stocks),
+            "fx_warnings": {},
+            "refreshed_at": None,
+        }, False
     key = f"stock_popup_details:{','.join(symbols)}"
     data, stale = get_cached_swr(
         key,
@@ -1773,10 +1838,18 @@ def get_cached_stock_popup_details_snapshot(stocks):
             for key, value in _CACHE.items()
             if key.startswith("stock_popup_details:")
         ]
+        cached_single_details = {
+            key.removeprefix("stock_detail:"): value.get("data")
+            for key, value in _CACHE.items()
+            if key.startswith("stock_detail:")
+        }
     for cached in cached_details:
         for symbol in symbols:
             if symbol in cached:
                 details[symbol] = cached[symbol]
+    for symbol in symbols:
+        if symbol in cached_single_details and cached_single_details[symbol]:
+            details[symbol] = cached_single_details[symbol]
     return details
 
 
@@ -2112,30 +2185,7 @@ def fetch_stock_detail(display_symbol):
     if not clean_symbol:
         raise ValueError("Missing stock symbol")
     yf_symbol = clean_symbol if clean_symbol.endswith(".NS") else f"{clean_symbol}.NS"
-    ticker = yf.Ticker(yf_symbol)
-    info = ticker.info or {}
-    history = ticker.history(period="5y", interval="1d", auto_adjust=False)
-    closes = history["Close"].dropna() if history is not None and "Close" in history else pd.Series(dtype=float)
-    summary = _strip_html(info.get("longBusinessSummary") or "")
-    return {
-        "symbol": clean_symbol.removesuffix(".NS"),
-        "pe_ratio": _parse_number(info.get("trailingPE")) or _parse_number(info.get("forwardPE")),
-        "revenue": _parse_number(info.get("totalRevenue")),
-        "pat_margin": (
-            _parse_number(info.get("profitMargins")) * 100
-            if _parse_number(info.get("profitMargins")) is not None
-            else None
-        ),
-        "sector": info.get("sector") or "",
-        "industry": info.get("industry") or "",
-        "description": summary[:520],
-        "growth": {
-            "1m": _growth_from_closes(closes, 21),
-            "3m": _growth_from_closes(closes, 63),
-            "1y": _growth_from_closes(closes, 252),
-            "5y": _growth_from_closes(closes, min(1260, max(len(closes) - 2, 0))),
-        },
-    }
+    return _build_stock_detail_from_ticker({"symbol": yf_symbol})
 
 
 def get_stock_detail(display_symbol):
@@ -2149,7 +2199,12 @@ def get_stock_detail(display_symbol):
     for details in popup_caches:
         if clean_symbol in details:
             return details[clean_symbol]
-    return {}
+    data, _ = get_cached(
+        f"stock_detail:{clean_symbol}",
+        STOCK_DETAIL_CACHE_TTL,
+        lambda: fetch_stock_detail(clean_symbol),
+    )
+    return data or {}
 
 
 def apply_nifty_impact(rows, snapshot):
@@ -2254,6 +2309,7 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
         "impact_available": impact_available,
         "market_stats": build_market_stats(broad_rows),
         "internals": build_market_internals(rows),
+        "insights": build_dashboard_insights(broad_rows, rows),
     }
 
 
@@ -2285,6 +2341,77 @@ def build_market_internals(rows):
         "above_sma200": sum(row["price"] > row["sma200"] for row in technical200),
         "near_high": len(near_high),
         "volume_surge": len(volume_surge),
+    }
+
+
+def build_dashboard_insights(rows, nifty_rows=None):
+    priced = [row for row in rows if row.get("percent") is not None]
+    if not priced:
+        return {
+            "momentum": [],
+            "risk": [],
+            "leadership": [],
+            "participation": [],
+        }
+    advancers = [row for row in priced if row["percent"] > 0]
+    decliners = [row for row in priced if row["percent"] < 0]
+    uptrends = [row for row in priced if row.get("signal") == "Uptrend"]
+    downtrends = [row for row in priced if row.get("signal") == "Downtrend"]
+    accumulation = [row for row in priced if row.get("accumulation_score", 0) >= 2]
+    volume_surges = [row for row in priced if row.get("volume_change") is not None and row["volume_change"] > 25]
+    near_high = [
+        row for row in priced
+        if row.get("price") is not None and row.get("high52") and row["price"] >= row["high52"] * 0.95
+    ]
+    near_low = [
+        row for row in priced
+        if row.get("price") is not None and row.get("low52") and row["price"] <= row["low52"] * 1.08
+    ]
+    top_sector = None
+    sectors = build_sector_performance(rows)
+    if sectors:
+        top_sector = sectors[0]
+    nifty_priced = [row for row in (nifty_rows or []) if row.get("percent") is not None]
+    nifty_avg = sum(row["percent"] for row in nifty_priced) / len(nifty_priced) if nifty_priced else None
+    broad_avg = sum(row["percent"] for row in priced) / len(priced)
+    strongest = max(priced, key=lambda row: row["percent"])
+    weakest = min(priced, key=lambda row: row["percent"])
+    return {
+        "momentum": [
+            {"label": "Uptrend Stocks", "value": len(uptrends), "tone": "good"},
+            {"label": "Accumulation Setups", "value": len(accumulation), "tone": "accent"},
+            {"label": "Volume Surge", "value": len(volume_surges), "tone": "warm"},
+        ],
+        "risk": [
+            {"label": "Downtrends", "value": len(downtrends), "tone": "bad"},
+            {"label": "Near 52W Low", "value": len(near_low), "tone": "bad"},
+            {"label": "Decliners", "value": len(decliners), "tone": "bad"},
+        ],
+        "leadership": [
+            {
+                "label": "Strongest Stock",
+                "value": strongest["display_symbol"],
+                "detail": f"{strongest['percent']:+.2f}%",
+                "tone": "good",
+            },
+            {
+                "label": "Weakest Stock",
+                "value": weakest["display_symbol"],
+                "detail": f"{weakest['percent']:+.2f}%",
+                "tone": "bad",
+            },
+            {
+                "label": "Top Sector",
+                "value": top_sector["name"] if top_sector else "-",
+                "detail": f"{top_sector['percent']:+.2f}%" if top_sector else "-",
+                "tone": "accent",
+            },
+        ],
+        "participation": [
+            {"label": "Advancers", "value": len(advancers), "detail": f"{len(advancers) / len(priced) * 100:.1f}%", "tone": "good"},
+            {"label": "Near 52W High", "value": len(near_high), "tone": "good"},
+            {"label": "NIFTY vs Broad", "value": f"{(nifty_avg - broad_avg):+.2f}%" if nifty_avg is not None else "-", "tone": "accent"},
+        ],
     }
 
 
@@ -2438,6 +2565,7 @@ def empty_market_dashboard():
         "impact_available": False,
         "market_stats": build_market_stats([]),
         "internals": build_market_internals([]),
+        "insights": build_dashboard_insights([]),
     }
 
 

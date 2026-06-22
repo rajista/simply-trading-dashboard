@@ -37,13 +37,18 @@
         pe: card.querySelector("[data-hover-pe]"),
         revenue: card.querySelector("[data-hover-revenue]"),
         pat: card.querySelector("[data-hover-pat]"),
+        opm: card.querySelector("[data-hover-opm]"),
         roe: card.querySelector("[data-hover-roe]"),
         roce: card.querySelector("[data-hover-roce]"),
         pb: card.querySelector("[data-hover-pb]"),
         profitCagr: card.querySelector("[data-hover-profit-cagr]"),
         avgPe: card.querySelector("[data-hover-avg-pe]"),
         debtEquity: card.querySelector("[data-hover-debt-equity]"),
+        totalDebt: card.querySelector("[data-hover-total-debt]"),
         promoter: card.querySelector("[data-hover-promoter]"),
+        fii: card.querySelector("[data-hover-fii]"),
+        dii: card.querySelector("[data-hover-dii]"),
+        retail: card.querySelector("[data-hover-retail]"),
         fiiDii: card.querySelector("[data-hover-fii-dii]"),
         dividendYield: card.querySelector("[data-hover-dividend-yield]"),
         delivery: card.querySelector("[data-hover-delivery]"),
@@ -51,6 +56,7 @@
     };
     let hideTimer;
     let pinned = false;
+    const detailRequests = new Map();
     const prefersTapPopup = window.matchMedia("(hover: none), (pointer: coarse)").matches;
 
     const signed = (value, digits = 2) => {
@@ -90,12 +96,39 @@
     const formatTrendValue = (value, trend) => {
         const formatted = formatPercent(value);
         if (formatted === "-") return "-";
-        return trend ? `${formatted} ${trend}` : formatted;
+        return `${formatted} · ${trend || "chg -"}`;
     };
 
     const setFlag = (element, enabled) => {
         if (!element) return;
         element.classList.toggle("is-on", Boolean(enabled));
+    };
+
+    const needsDetailFetch = (detail) => {
+        if (!detail || !Object.keys(detail).length) return true;
+        return [
+            "operating_profit_margin",
+            "total_debt",
+            "promoter_holding",
+            "fii_holding",
+            "dii_holding",
+            "retail_holding",
+        ].every((key) => detail[key] === null || detail[key] === undefined);
+    };
+
+    const hydrateDetail = (item, target) => {
+        if (!needsDetailFetch(item.details) || detailRequests.has(item.symbol)) return;
+        const request = fetch(`/api/stocks/${encodeURIComponent(item.symbol)}`)
+            .then((response) => response.ok ? response.json() : null)
+            .then((detail) => {
+                if (!detail || !Object.keys(detail).length) return;
+                item.details = {...(item.details || {}), ...detail};
+                if (card.classList.contains("is-visible") && fields.symbol.textContent === item.symbol) {
+                    render(target, item);
+                }
+            })
+            .catch(() => null);
+        detailRequests.set(item.symbol, request);
     };
 
     const chartPoints = (series) => {
@@ -130,11 +163,7 @@
         card.style.top = `${Math.max(10, top)}px`;
     };
 
-    const show = (target, keepOpen = false) => {
-        const item = tickerData[target.dataset.symbol];
-        if (!item) return;
-        clearTimeout(hideTimer);
-        pinned = keepOpen || prefersTapPopup;
+    const render = (target, item) => {
         const positive = Number(item.percent || 0) >= 0;
         fields.symbol.textContent = item.symbol;
         fields.sector.textContent = item.sector || "";
@@ -164,13 +193,18 @@
         fields.pe.textContent = formatRatio(detail.pe_ratio);
         fields.revenue.textContent = formatRevenue(detail.revenue);
         fields.pat.textContent = formatPercent(detail.pat_margin);
+        fields.opm.textContent = formatPercent(detail.operating_profit_margin);
         fields.roe.textContent = formatPercent(detail.roe);
         fields.roce.textContent = formatPercent(detail.roce);
         fields.pb.textContent = formatRatio(detail.price_to_book);
         fields.profitCagr.textContent = formatPercent(detail.profit_cagr_3y);
         fields.avgPe.textContent = formatRatio(detail.avg_pe_3y);
         fields.debtEquity.textContent = formatRatio(detail.debt_equity);
+        fields.totalDebt.textContent = compactIndian(detail.total_debt);
         fields.promoter.textContent = formatTrendValue(detail.promoter_holding, detail.promoter_trend);
+        fields.fii.textContent = formatTrendValue(detail.fii_holding, detail.fii_trend);
+        fields.dii.textContent = formatTrendValue(detail.dii_holding, detail.dii_trend);
+        fields.retail.textContent = formatTrendValue(detail.retail_holding, detail.retail_trend);
         fields.fiiDii.textContent = formatTrendValue(detail.fii_dii_holding, detail.fii_dii_trend);
         fields.dividendYield.textContent = formatPercent(detail.dividend_yield);
         fields.delivery.textContent = formatPercent(detail.delivery_percent ?? item.delivery_percent);
@@ -178,10 +212,21 @@
         chart.setAttribute("points", chartPoints(item.series));
         card.classList.toggle("is-negative", !positive);
         card.classList.toggle("is-mobile-popup", prefersTapPopup);
+    };
+
+    const show = (target, keepOpen = false) => {
+        const item = tickerData[target.dataset.symbol];
+        if (!item) return;
+        clearTimeout(hideTimer);
+        pinned = keepOpen || prefersTapPopup;
+        render(target, item);
         card.classList.add("is-visible");
         card.scrollTop = 0;
         card.setAttribute("aria-hidden", "false");
         requestAnimationFrame(() => placeCard(target));
+        if (keepOpen || prefersTapPopup) {
+            hydrateDetail(item, target);
+        }
     };
 
     const hide = (force = false) => {

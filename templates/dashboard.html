@@ -61,6 +61,27 @@
     {% endfor %}
 </section>
 
+<section class="dashboard-insights panel">
+    <header>
+        <div>
+            <span>Live Read</span>
+            <h2>Dashboard Insights</h2>
+        </div>
+        <strong>{{ market.market_stats.tracked }} tracked stocks</strong>
+    </header>
+    <div class="insight-chip-grid">
+        {% for group_name, cards in market.insights.items() %}
+            {% for card in cards %}
+                <article class="insight-chip tone-{{ card.tone }}">
+                    <small>{{ card.label }}</small>
+                    <b>{{ card.value }}</b>
+                    {% if card.detail %}<span>{{ card.detail }}</span>{% endif %}
+                </article>
+            {% endfor %}
+        {% endfor %}
+    </div>
+</section>
+
 <section class="dashboard-grid">
     <div class="market-tables panel">
         <div class="mover-column">
@@ -281,6 +302,9 @@
                 <span>P/E <b data-hover-pe>-</b></span>
                 <span>Revenue <b data-hover-revenue>-</b></span>
                 <span>PAT Margin <b data-hover-pat>-</b></span>
+                <span>Operating Margin <b data-hover-opm>-</b></span>
+                <span>Total Debt <b data-hover-total-debt>-</b></span>
+                <span>Debt/Equity <b data-hover-debt-equity>-</b></span>
             </div>
             <div class="advanced-grid">
                 <span>ROE <b data-hover-roe>-</b></span>
@@ -288,11 +312,15 @@
                 <span>P/B <b data-hover-pb>-</b></span>
                 <span>3Y Profit CAGR <b data-hover-profit-cagr>-</b></span>
                 <span>3Y Avg P/E <b data-hover-avg-pe>-</b></span>
-                <span>Debt/Equity <b data-hover-debt-equity>-</b></span>
-                <span>Promoter <b data-hover-promoter>-</b></span>
-                <span>FII/DII <b data-hover-fii-dii>-</b></span>
                 <span>Dividend Yield <b data-hover-dividend-yield>-</b></span>
                 <span>Delivery <b data-hover-delivery>-</b></span>
+            </div>
+            <div class="ownership-grid">
+                <span class="owner-promoter">Promoter <b data-hover-promoter>-</b></span>
+                <span class="owner-fii">FII <b data-hover-fii>-</b></span>
+                <span class="owner-dii">DII <b data-hover-dii>-</b></span>
+                <span class="owner-retail">Retail <b data-hover-retail>-</b></span>
+                <span class="owner-total">Institutions <b data-hover-fii-dii>-</b></span>
             </div>
             <p data-hover-description>Company details are loaded from the daily popup cache.</p>
         </div>
