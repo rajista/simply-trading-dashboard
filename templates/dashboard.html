@@ -80,6 +80,13 @@
             {% endfor %}
         {% endfor %}
     </div>
+    <div class="dashboard-note-grid">
+        {% for note in market.dashboard_notes %}
+            <p>{{ note }}</p>
+        {% else %}
+            <p>Dashboard notes will appear after market rows are cached.</p>
+        {% endfor %}
+    </div>
 </section>
 
 <section class="dashboard-grid">
@@ -315,12 +322,13 @@
                 <span>Dividend Yield <b data-hover-dividend-yield>-</b></span>
                 <span>Delivery <b data-hover-delivery>-</b></span>
             </div>
+            <strong class="ownership-title">Shareholding / change</strong>
             <div class="ownership-grid">
-                <span class="owner-promoter">Promoter <b data-hover-promoter>-</b></span>
-                <span class="owner-fii">FII <b data-hover-fii>-</b></span>
-                <span class="owner-dii">DII <b data-hover-dii>-</b></span>
-                <span class="owner-retail">Retail <b data-hover-retail>-</b></span>
-                <span class="owner-total">Institutions <b data-hover-fii-dii>-</b></span>
+                <span class="owner-promoter">Promoter / Chg <b data-hover-promoter>-</b></span>
+                <span class="owner-fii">FII / Chg <b data-hover-fii>-</b></span>
+                <span class="owner-dii">DII / Chg <b data-hover-dii>-</b></span>
+                <span class="owner-retail">Retail / Chg <b data-hover-retail>-</b></span>
+                <span class="owner-total">Institutions / Chg <b data-hover-fii-dii>-</b></span>
             </div>
             <p data-hover-description>Company details are loaded from the daily popup cache.</p>
         </div>

@@ -14,6 +14,7 @@ from app import (
     build_candles,
     build_calendar_panels,
     build_dashboard_insights,
+    build_dashboard_notes,
     build_heatmap,
     build_insights,
     build_sector_performance,
@@ -188,6 +189,9 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(insights["risk"][0]["value"], 1)
         self.assertEqual(insights["leadership"][0]["value"], "AAA")
         self.assertEqual(insights["participation"][0]["detail"], "50.0%")
+        notes = build_dashboard_notes(rows, rows[:1])
+        self.assertTrue(any("Participation is 50.0%" in note for note in notes))
+        self.assertTrue(any("AAA is strongest" in note for note in notes))
 
     def test_breadth_and_heatmap(self):
         rows = [
@@ -463,14 +467,16 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260622-3", html)
-        self.assertIn("/static/js/dashboard.js?v=20260622-3", html)
+        self.assertIn("/static/css/style.css?v=20260622-4", html)
+        self.assertIn("/static/js/dashboard.js?v=20260622-4", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
         self.assertIn("Dashboard Insights", html)
+        self.assertIn("Dashboard notes will appear", html)
         self.assertIn("Operating Margin", html)
         self.assertIn("Retail", html)
+        self.assertIn("Shareholding / change", html)
         self.assertIn("NIFTY 500", html)
         self.assertIn("sector-toggle", html)
         self.assertIn('class="option-chain-promo" href="https://trading-simplified.com/option-chain-analysis/"', html)

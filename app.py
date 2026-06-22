@@ -2310,6 +2310,7 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
         "market_stats": build_market_stats(broad_rows),
         "internals": build_market_internals(rows),
         "insights": build_dashboard_insights(broad_rows, rows),
+        "dashboard_notes": build_dashboard_notes(broad_rows, rows),
     }
 
 
@@ -2413,6 +2414,56 @@ def build_dashboard_insights(rows, nifty_rows=None):
             {"label": "NIFTY vs Broad", "value": f"{(nifty_avg - broad_avg):+.2f}%" if nifty_avg is not None else "-", "tone": "accent"},
         ],
     }
+
+
+def build_dashboard_notes(rows, nifty_rows=None):
+    priced = [row for row in rows if row.get("percent") is not None]
+    if not priced:
+        return ["Live market rows are still warming up. Cached panels will populate automatically."]
+    advancers = [row for row in priced if row["percent"] > 0]
+    decliners = [row for row in priced if row["percent"] < 0]
+    uptrends = [row for row in priced if row.get("signal") == "Uptrend"]
+    accumulation = [row for row in priced if row.get("accumulation_score", 0) >= 2]
+    volume_surges = [row for row in priced if row.get("volume_change") is not None and row["volume_change"] > 25]
+    sectors = build_sector_performance(rows)
+    top_sector = sectors[0] if sectors else None
+    weak_sector = sectors[-1] if sectors else None
+    strongest = max(priced, key=lambda row: row["percent"])
+    weakest = min(priced, key=lambda row: row["percent"])
+    nifty_priced = [row for row in (nifty_rows or []) if row.get("percent") is not None]
+    broad_avg = sum(row["percent"] for row in priced) / len(priced)
+    nifty_avg = sum(row["percent"] for row in nifty_priced) / len(nifty_priced) if nifty_priced else None
+    participation = len(advancers) / len(priced) * 100
+    notes = [
+        (
+            f"Participation is {participation:.1f}% with {len(advancers)} advancers and "
+            f"{len(decliners)} decliners across the tracked universe."
+        ),
+        (
+            f"{len(uptrends)} stocks are in uptrend and {len(accumulation)} show 2/3 or 3/3 "
+            "accumulation signals, useful for follow-through watchlists."
+        ),
+        (
+            f"Leadership: {strongest['display_symbol']} is strongest at {strongest['percent']:+.2f}%, "
+            f"while {weakest['display_symbol']} is weakest at {weakest['percent']:+.2f}%."
+        ),
+    ]
+    if top_sector:
+        notes.append(
+            f"Sector tone: {top_sector['name']} leads at {top_sector['percent']:+.2f}% average move; "
+            f"{weak_sector['name']} is the softest at {weak_sector['percent']:+.2f}%."
+        )
+    if volume_surges:
+        leader = max(volume_surges, key=lambda row: row.get("volume_change") or 0)
+        notes.append(
+            f"Volume watch: {len(volume_surges)} stocks show volume expansion above 25%; "
+            f"{leader['display_symbol']} has the strongest volume jump at {leader['volume_change']:+.1f}%."
+        )
+    if nifty_avg is not None:
+        notes.append(
+            f"NIFTY 50 average move is {nifty_avg:+.2f}% versus broad universe average {broad_avg:+.2f}%."
+        )
+    return notes
 
 
 def _strip_html(value):
@@ -2566,6 +2617,7 @@ def empty_market_dashboard():
         "market_stats": build_market_stats([]),
         "internals": build_market_internals([]),
         "insights": build_dashboard_insights([]),
+        "dashboard_notes": build_dashboard_notes([]),
     }
 
 

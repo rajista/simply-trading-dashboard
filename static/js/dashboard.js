@@ -56,7 +56,6 @@
     };
     let hideTimer;
     let pinned = false;
-    const detailRequests = new Map();
     const prefersTapPopup = window.matchMedia("(hover: none), (pointer: coarse)").matches;
 
     const signed = (value, digits = 2) => {
@@ -96,39 +95,12 @@
     const formatTrendValue = (value, trend) => {
         const formatted = formatPercent(value);
         if (formatted === "-") return "-";
-        return `${formatted} · ${trend || "chg -"}`;
+        return `${formatted} | ${trend || "chg n/a"}`;
     };
 
     const setFlag = (element, enabled) => {
         if (!element) return;
         element.classList.toggle("is-on", Boolean(enabled));
-    };
-
-    const needsDetailFetch = (detail) => {
-        if (!detail || !Object.keys(detail).length) return true;
-        return [
-            "operating_profit_margin",
-            "total_debt",
-            "promoter_holding",
-            "fii_holding",
-            "dii_holding",
-            "retail_holding",
-        ].every((key) => detail[key] === null || detail[key] === undefined);
-    };
-
-    const hydrateDetail = (item, target) => {
-        if (!needsDetailFetch(item.details) || detailRequests.has(item.symbol)) return;
-        const request = fetch(`/api/stocks/${encodeURIComponent(item.symbol)}`)
-            .then((response) => response.ok ? response.json() : null)
-            .then((detail) => {
-                if (!detail || !Object.keys(detail).length) return;
-                item.details = {...(item.details || {}), ...detail};
-                if (card.classList.contains("is-visible") && fields.symbol.textContent === item.symbol) {
-                    render(target, item);
-                }
-            })
-            .catch(() => null);
-        detailRequests.set(item.symbol, request);
     };
 
     const chartPoints = (series) => {
@@ -224,9 +196,6 @@
         card.scrollTop = 0;
         card.setAttribute("aria-hidden", "false");
         requestAnimationFrame(() => placeCard(target));
-        if (keepOpen || prefersTapPopup) {
-            hydrateDetail(item, target);
-        }
     };
 
     const hide = (force = false) => {
