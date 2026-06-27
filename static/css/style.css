@@ -884,6 +884,43 @@ tbody tr:hover { background: #2a303d; }
     color: #b9bfcb;
     line-height: 1.35;
 }
+.stock-news-box {
+    display: grid;
+    gap: 5px;
+    padding: 7px;
+    border: 1px solid rgba(74, 168, 255, .25);
+    border-radius: 5px;
+    background: linear-gradient(135deg, rgba(41, 98, 255, .13), rgba(10, 14, 23, .55));
+}
+.stock-news-box > strong {
+    color: #f6c85f;
+    font-size: 9px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+.stock-news-box ul {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.stock-news-box li {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+.stock-news-box a {
+    overflow: hidden;
+    color: var(--link);
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.stock-news-box small, .stock-news-box .muted-news {
+    color: var(--muted);
+    font-size: 10px;
+}
 
 .signals { padding: 8px 10px; }
 .signals h2, .sector-panel h2, .headlines h2, .index-summary h2,
@@ -1055,6 +1092,16 @@ tbody tr:hover { background: #2a303d; }
     color: var(--muted);
 }
 .deal-meta b { color: var(--text); }
+.snapshot-warming {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 10px;
+    padding: 10px;
+    border-color: rgba(246, 200, 95, .36);
+    background: linear-gradient(135deg, rgba(246, 200, 95, .12), rgba(19, 23, 34, .95));
+}
+.snapshot-warming strong { color: #f6c85f; }
+.snapshot-warming span { color: #c8cedb; }
 .analyst-brief {
     grid-column: 1 / -1;
     display: grid;

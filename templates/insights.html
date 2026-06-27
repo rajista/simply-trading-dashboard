@@ -6,9 +6,11 @@
 <section class="market-brief panel">
     <span class="brief-time">Today</span>
     <strong>Market Insights: price trend, accumulation, bulk/block deals and short-selling pressure across the tracked universe.</strong>
+    {% if snapshot_status != "ready" %}<span class="stale-label">snapshot warming</span>{% endif %}
     {% if market_stale %}<span class="stale-label">cached market data</span>{% endif %}
     {% if deal_data_stale %}<span class="stale-label">cached deal data</span>{% endif %}
     {% if constituents_stale %}<span class="stale-label">cached constituents</span>{% endif %}
+    {% if insights_snapshot_error %}<span class="stale-label">refresh issue</span>{% endif %}
 </section>
 
 <section class="insight-stats stats-grid panel">
@@ -24,8 +26,16 @@
     <span>Bulk / block / short data source: <b>{{ insights.deal_meta.source }}</b></span>
     <span>Latest deal date: <b>{{ insights.deal_meta.latest_date or "-" }}</b></span>
     <span>Loaded: <b>{{ insights.deal_meta.refreshed_at or "-" }}</b></span>
+    <span>Snapshot: <b>{{ insights_snapshot_created_at or "warming" }}</b></span>
     <span>Refresh: <b>nightly at 00:00 IST</b></span>
 </section>
+
+{% if snapshot_status != "ready" %}
+<section class="snapshot-warming panel" data-insights-warming>
+    <strong>Preparing the latest Insights snapshot</strong>
+    <span>The page opens instantly. Cached analytical panels will appear automatically after the API reports the snapshot is ready.</span>
+</section>
+{% endif %}
 
 <section class="insights-grid">
     <article class="panel analyst-brief">
@@ -279,7 +289,40 @@
                 <span class="owner-total">Institutions / Chg <b data-hover-fii-dii>-</b></span>
             </div>
             <p data-hover-description>Company details are loaded from the daily popup cache.</p>
+            <div class="stock-news-box">
+                <strong>Latest News</strong>
+                <ul data-hover-news></ul>
+            </div>
         </div>
     </div>
 </aside>
+<script id="insights-snapshot-meta" type="application/json">{{ {"status": snapshot_status, "created_at": insights_snapshot_created_at}|tojson }}</script>
+<script>
+(() => {
+    const metaElement = document.getElementById("insights-snapshot-meta");
+    if (!metaElement) return;
+    let meta = {};
+    try {
+        meta = JSON.parse(metaElement.textContent || "{}");
+    } catch {
+        return;
+    }
+    const checkSnapshot = () => {
+        fetch("/api/insights-data", {headers: {"Accept": "application/json"}})
+            .then((response) => response.ok ? response.json() : null)
+            .then((payload) => {
+                if (!payload) return;
+                if (payload.status === "ready" && (!meta.created_at || payload.refreshed_at !== meta.created_at)) {
+                    window.location.reload();
+                    return;
+                }
+                if (payload.status !== "ready") {
+                    window.setTimeout(checkSnapshot, 10000);
+                }
+            })
+            .catch(() => window.setTimeout(checkSnapshot, 15000));
+    };
+    window.setTimeout(checkSnapshot, meta.status === "ready" ? 3000 : 800);
+})();
+</script>
 {% endblock %}

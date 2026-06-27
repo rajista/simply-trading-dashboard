@@ -9,6 +9,7 @@ from stocks import STOCKS
 from app import (
     IST,
     _CACHE,
+    _parse_stock_news_rss,
     app,
     build_breadth,
     build_candles,
@@ -23,6 +24,7 @@ from app import (
     compute_obv_divergence,
     compute_quiet_pullback,
     compute_volume_range_signal,
+    empty_insights_data,
     apply_nifty_impact,
     apply_nse_quote_snapshot,
     fetch_nse_nifty50_snapshot,
@@ -38,6 +40,7 @@ from app import (
     normalize_deal_frame,
     normalize_fii_dii_activity,
     parse_nse_index_card,
+    refresh_daily_insights_snapshot,
     seconds_until_next_ist_midnight,
 )
 
@@ -477,8 +480,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260622-5", html)
-        self.assertIn("/static/js/dashboard.js?v=20260622-5", html)
+        self.assertIn("/static/css/style.css?v=20260627-1", html)
+        self.assertIn("/static/js/dashboard.js?v=20260627-1", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
@@ -487,6 +490,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Operating Margin", html)
         self.assertIn("Retail", html)
         self.assertIn("Shareholding / change", html)
+        self.assertIn("Latest News", html)
         self.assertIn("NIFTY 500", html)
         self.assertIn("sector-toggle", html)
         self.assertIn('class="option-chain-promo" href="https://trading-simplified.com/option-chain-analysis/"', html)
@@ -514,31 +518,39 @@ class RouteTests(unittest.TestCase):
         self.assertNotIn("AI Option Chain Analysis", html)
         self.assert_tool_navigation(html)
 
-    @patch("app.get_nifty500_universe", return_value=([], False))
-    @patch("app.get_stock_universe", return_value=([], False))
-    @patch("app.get_cached_swr")
-    def test_insights_route_reuses_cached_market_rows(self, cached, universe, broad_universe):
-        market = {
-            **SAMPLE_MARKET,
-            "rows": [{
-                "display_symbol": "AAA", "name": "AAA", "sector": "Tech", "price": 100,
-                "high52": 101, "signal": "Uptrend", "accumulation_score": 2,
-                "five_day_change": 3.2, "obv_divergence": True, "quiet_pullback": False,
-                "volume_range_signal": True, "percent": 1.0, "volume": 1000, "chart_series": [90, 100],
-                "change": 1.0, "market_cap": 10_000_000,
-            }],
-            "hover_data": {
-                "AAA": {"symbol": "AAA", "series": [90, 100], "accumulation_score": 2}
+    @patch("app.build_insights")
+    @patch("app.load_cached_market_context")
+    @patch("app.get_cached_insights_snapshot")
+    def test_insights_route_uses_precomputed_snapshot_only(self, snapshot, market_loader, insight_builder):
+        insight_data = empty_insights_data()
+        row = {
+            "display_symbol": "AAA", "name": "AAA", "sector": "Tech", "price": 100,
+            "high52": 101, "signal": "Uptrend", "accumulation_score": 2,
+            "five_day_change": 3.2, "obv_divergence": True, "quiet_pullback": False,
+            "volume_range_signal": True, "percent": 1.0, "volume": 1000, "chart_series": [90, 100],
+            "change": 1.0, "market_cap": 10_000_000, "deal": {
+                "bulk_net30": 0, "bulk_trades30": 0, "short_qty30": 0, "short_change": 0,
             },
-            "market_stats": {
-                "tracked": 1, "priced": 1, "advance_ratio": 100,
-                "average_change": 1.0, "total_volume": 1000, "total_market_cap": 10_000_000,
-            },
+            "drivers": ["2/3 accumulation setup"], "conflicts": [],
+            "composite_score": 35.0, "analyst_view": "Aligned", "detail": {},
         }
-        cached.side_effect = [
-            (market, False),
-            ({}, False),
-        ]
+        insight_data["high_conviction"] = [row]
+        insight_data["ranked"] = [row]
+        insight_data["deal_meta"] = {
+            "source": "snapshot",
+            "latest_date": "2026-06-26",
+            "refreshed_at": "2026-06-27 00:05 IST",
+            "row_count": 12,
+        }
+        snapshot.return_value = {
+            "status": "ready",
+            "insights": insight_data,
+            "hover_data": {"AAA": {"symbol": "AAA", "series": [90, 100], "details": {}}},
+            "created_at": "2026-06-27 00:06 IST",
+            "refreshed_at": "2026-06-27 00:06 IST",
+            "stale": False,
+            "error": None,
+        }
         html = self.client.get("/insights").get_data(as_text=True)
         self.assertIn("Market Insights", html)
         self.assertIn("High-Conviction Watchlist", html)
@@ -546,8 +558,55 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Accumulation Watch", html)
         self.assertIn("Sector-Wise Stocks & Financial Metrics", html)
         self.assertIn("AAA", html)
+        self.assertIn("Latest News", html)
+        self.assertIn("/api/insights-data", html)
         self.assertIn('class="active" href="/insights">Insights</a>', html)
-        self.assertEqual(cached.call_count, 2)
+        market_loader.assert_not_called()
+        insight_builder.assert_not_called()
+
+    @patch("app.build_insights")
+    @patch("app.load_cached_market_context")
+    @patch("app.get_cached_insights_snapshot", return_value=None)
+    def test_insights_route_warming_shell_is_lightweight(self, snapshot, market_loader, insight_builder):
+        html = self.client.get("/insights").get_data(as_text=True)
+        self.assertIn("snapshot warming", html)
+        self.assertIn("Preparing the latest Insights snapshot", html)
+        market_loader.assert_not_called()
+        insight_builder.assert_not_called()
+
+    @patch("app.get_cached_insights_snapshot")
+    def test_insights_data_api_ready_and_warming(self, snapshot):
+        snapshot.return_value = None
+        warming = self.client.get("/api/insights-data").get_json()
+        self.assertEqual(warming["status"], "warming")
+        snapshot.return_value = {"status": "ready", "created_at": "now", "stale": True, "error": "old"}
+        ready = self.client.get("/api/insights-data").get_json()
+        self.assertEqual(ready["status"], "ready")
+        self.assertTrue(ready["stale"])
+
+    @patch("app.refresh_insights_snapshot")
+    @patch("app.refresh_bulk_block_short_cache_from_nse")
+    def test_daily_insights_refresh_runs_after_nse_refresh(self, bulk_refresh, insights_refresh):
+        bulk_refresh.return_value = {"source": "fresh"}
+        refresh_daily_insights_snapshot()
+        bulk_refresh.assert_called_once()
+        insights_refresh.assert_called_once_with(deal_data={"source": "fresh"})
+
+    def test_stock_news_rss_parser_sanitizes_items(self):
+        rss = b"""<?xml version="1.0"?><rss><channel><item><title><![CDATA[<b>INFY</b> wins deal]]></title><link>https://example.com/infy</link><source>Yahoo</source><pubDate>Fri, 26 Jun 2026 10:00:00 GMT</pubDate></item></channel></rss>"""
+        parsed = _parse_stock_news_rss(rss)
+        self.assertEqual(parsed[0]["title"], "INFY wins deal")
+        self.assertEqual(parsed[0]["source"], "Yahoo")
+        self.assertIn("https://example.com/infy", parsed[0]["url"])
+
+    @patch("app._fallback_stock_news_from_market_headlines", return_value=[{"title": "MSUMI update", "url": "https://example.com", "source": "Market", "published": ""}])
+    @patch("app.fetch_stock_detail", return_value={})
+    def test_stock_detail_fallback_never_returns_blank(self, fetch_detail, fallback_news):
+        _CACHE.clear()
+        detail = self.client.get("/api/stocks/MSUMI").get_json()
+        self.assertEqual(detail["symbol"], "MSUMI")
+        self.assertIn("temporarily unavailable", detail["description"])
+        self.assertEqual(detail["news"][0]["title"], "MSUMI update")
 
     def test_articles_page_uses_internal_layout_with_filters_and_search(self):
         html = self.client.get("/articles").get_data(as_text=True)

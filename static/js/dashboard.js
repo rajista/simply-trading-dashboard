@@ -53,6 +53,7 @@
         dividendYield: card.querySelector("[data-hover-dividend-yield]"),
         delivery: card.querySelector("[data-hover-delivery]"),
         description: card.querySelector("[data-hover-description]"),
+        newsList: card.querySelector("[data-hover-news]"),
     };
     let hideTimer;
     let pinned = false;
@@ -102,6 +103,32 @@
     const setFlag = (element, enabled) => {
         if (!element) return;
         element.classList.toggle("is-on", Boolean(enabled));
+    };
+
+    const renderNews = (news) => {
+        if (!fields.newsList) return;
+        fields.newsList.textContent = "";
+        const items = Array.isArray(news) ? news.slice(0, 3) : [];
+        if (!items.length) {
+            const empty = document.createElement("li");
+            empty.className = "muted-news";
+            empty.textContent = "No stock-specific news found in the current cache.";
+            fields.newsList.appendChild(empty);
+            return;
+        }
+        items.forEach((item) => {
+            const li = document.createElement("li");
+            const link = document.createElement("a");
+            link.href = item.url || "#";
+            link.textContent = item.title || "Market update";
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            const meta = document.createElement("small");
+            meta.textContent = [item.source, item.published].filter(Boolean).join(" | ");
+            li.appendChild(link);
+            if (meta.textContent) li.appendChild(meta);
+            fields.newsList.appendChild(li);
+        });
     };
 
     const hasUsefulDetails = (detail) => {
@@ -212,6 +239,7 @@
         fields.dividendYield.textContent = formatPercent(detail.dividend_yield);
         fields.delivery.textContent = formatPercent(detail.delivery_percent ?? item.delivery_percent);
         fields.description.textContent = detail.description || "Company details unavailable in the current popup cache.";
+        renderNews(detail.news);
         chart.setAttribute("points", chartPoints(item.series));
         card.classList.toggle("is-negative", !positive);
         card.classList.toggle("is-mobile-popup", prefersTapPopup);

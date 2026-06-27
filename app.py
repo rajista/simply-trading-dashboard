@@ -7,6 +7,7 @@ from html import unescape
 import hashlib
 from io import StringIO
 import math
+import numbers
 import os
 from pathlib import Path
 import pickle
@@ -247,12 +248,14 @@ CALENDAR_CACHE_TTL = 21600
 CONSTITUENT_CACHE_TTL = 86400
 BULK_BLOCK_CACHE_TTL = 24 * 60 * 60
 STOCK_DETAIL_CACHE_TTL = 24 * 60 * 60
+INSIGHTS_SNAPSHOT_TTL = 7 * 24 * 60 * 60
 CACHE_DIR = Path(os.getenv("APP_CACHE_DIR", Path(__file__).resolve().parent / ".runtime_cache"))
 PERSISTENT_CACHE_ENABLED = (
     os.getenv("DISABLE_PERSISTENT_CACHE") != "1"
     and not any("unittest" in arg or "pytest" in arg for arg in sys.argv)
 )
 STOCK_POPUP_DETAILS_LATEST_KEY = "stock_popup_details:latest"
+INSIGHTS_SNAPSHOT_KEY = "insights_snapshot:latest"
 MAX_ASYNC_POPUP_DETAIL_PREFETCH = 75
 STOCK_DETAIL_WORKERS = int(os.getenv("STOCK_DETAIL_WORKERS", "3"))
 STARTUP_MARKET_REFRESH_DELAY = int(os.getenv("STARTUP_MARKET_REFRESH_DELAY_SECONDS", "10"))
@@ -1536,6 +1539,128 @@ def refresh_bulk_block_short_cache_from_nse():
     return data
 
 
+def empty_insights_data():
+    return {
+        "accumulation_count": 0,
+        "uptrend_count": 0,
+        "near_high_count": 0,
+        "institutional_accumulation_count": 0,
+        "high_conviction_count": 0,
+        "rising_short_count": 0,
+        "ranked": [],
+        "high_conviction": [],
+        "bulk_buy_leaders": [],
+        "bulk_sell_leaders": [],
+        "short_pressure": [],
+        "sector_deal_flow": [],
+        "sector_stock_tables": [],
+        "sectors": [],
+        "top_lines": [
+            "Insights snapshot is warming. The latest precomputed analysis will appear automatically."
+        ],
+        "deal_meta": {
+            "source": "warming",
+            "latest_date": None,
+            "refreshed_at": None,
+            "row_count": 0,
+        },
+    }
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, numbers.Integral) and not isinstance(value, bool):
+        return int(value)
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        value = float(value)
+        return value if math.isfinite(value) else None
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    return value
+
+
+def get_cached_insights_snapshot():
+    with _CACHE_LOCK:
+        cached = _CACHE.get(INSIGHTS_SNAPSHOT_KEY)
+    if cached and isinstance(cached.get("data"), dict):
+        return cached["data"]
+    cached = _read_persistent_cache(INSIGHTS_SNAPSHOT_KEY)
+    if cached and isinstance(cached.get("data"), dict):
+        with _CACHE_LOCK:
+            _CACHE[INSIGHTS_SNAPSHOT_KEY] = cached
+        return cached["data"]
+    return None
+
+
+def store_insights_snapshot(snapshot):
+    snapshot = _json_safe({
+        "status": snapshot.get("status", "ready"),
+        **snapshot,
+    })
+    with _CACHE_LOCK:
+        _CACHE[INSIGHTS_SNAPSHOT_KEY] = {
+            "data": snapshot,
+            "expires": time_module.time() + INSIGHTS_SNAPSHOT_TTL,
+        }
+    _write_persistent_cache(INSIGHTS_SNAPSHOT_KEY, snapshot, INSIGHTS_SNAPSHOT_TTL)
+    return snapshot
+
+
+def refresh_insights_snapshot(deal_data=None, market=None, stale=False, error=None):
+    if deal_data is None:
+        deal_data = read_bulk_block_short_files()
+    market = market or refresh_market_dashboard_cache()
+    rows = market.get("rows", []) if isinstance(market, dict) else []
+    popup_details = get_cached_stock_popup_details_snapshot(rows)
+    insight_data = build_insights(rows, deal_data or {}, popup_details)
+    created_at = datetime.now(IST).strftime("%Y-%m-%d %H:%M IST")
+    snapshot = {
+        "status": "ready",
+        "insights": insight_data,
+        "hover_data": build_stock_hover_data_with_details(rows, popup_details),
+        "deal_meta": insight_data.get("deal_meta", {}),
+        "created_at": created_at,
+        "refreshed_at": created_at,
+        "stale": bool(stale),
+        "error": error,
+        "market_stale": False,
+        "deal_data_stale": bool(stale),
+        "constituents_stale": False,
+    }
+    return store_insights_snapshot(snapshot)
+
+
+def refresh_daily_insights_snapshot():
+    try:
+        deal_data = refresh_bulk_block_short_cache_from_nse()
+        return refresh_insights_snapshot(deal_data=deal_data)
+    except Exception as exc:
+        previous = get_cached_insights_snapshot()
+        if previous:
+            return store_insights_snapshot(
+                {
+                    **previous,
+                    "status": "ready",
+                    "stale": True,
+                    "deal_data_stale": True,
+                    "error": str(exc),
+                }
+            )
+        return None
+
+
 def seconds_until_next_ist_midnight(now=None):
     current = now or datetime.now(IST)
     if current.tzinfo is None:
@@ -1549,7 +1674,7 @@ def _bulk_block_refresh_loop():
     while True:
         time_module.sleep(seconds_until_next_ist_midnight())
         try:
-            refresh_bulk_block_short_cache_from_nse()
+            refresh_daily_insights_snapshot()
         except Exception:
             pass
 
@@ -1606,6 +1731,91 @@ def build_stock_hover_data_with_details(rows, details):
         }
         for row in rows
     }
+
+
+DETAIL_USEFUL_FIELDS = (
+    "pe_ratio",
+    "revenue",
+    "operating_profit_margin",
+    "roe",
+    "price_to_book",
+    "promoter_holding",
+    "description",
+    "news",
+)
+
+
+def _detail_has_useful_content(detail):
+    if not isinstance(detail, dict) or not detail:
+        return False
+    for key in DETAIL_USEFUL_FIELDS:
+        value = detail.get(key)
+        if value not in (None, "", []):
+            return True
+    return False
+
+
+def _cached_dashboard_row_for_symbol(symbol):
+    symbol = _normalize_symbol(symbol)
+    if not symbol:
+        return {}
+    with _CACHE_LOCK:
+        cached_values = list(_CACHE.values())
+    for entry in cached_values:
+        data = entry.get("data") if isinstance(entry, dict) else None
+        if not isinstance(data, dict):
+            continue
+        rows = data.get("rows")
+        if isinstance(rows, list):
+            for row in rows:
+                if _normalize_symbol(row.get("display_symbol") or row.get("symbol")) == symbol:
+                    return row
+        market = data.get("market")
+        if isinstance(market, dict):
+            for row in market.get("rows", []) or []:
+                if _normalize_symbol(row.get("display_symbol") or row.get("symbol")) == symbol:
+                    return row
+    return {}
+
+
+def _known_stock_metadata(symbol):
+    symbol = _normalize_symbol(symbol)
+    for stock in STOCKS:
+        if _normalize_symbol(stock.get("symbol")) == symbol:
+            return stock
+    return {}
+
+
+def _fallback_stock_detail(symbol, detail=None):
+    symbol = _normalize_symbol(symbol)
+    detail = detail if isinstance(detail, dict) else {}
+    row = _cached_dashboard_row_for_symbol(symbol)
+    known = _known_stock_metadata(symbol)
+    name = detail.get("name") or row.get("name") or known.get("name") or symbol
+    sector = detail.get("sector") or row.get("sector") or known.get("sector") or ""
+    industry = detail.get("industry") or row.get("industry") or known.get("industry") or ""
+    news = detail.get("news")
+    if news in (None, []):
+        news = _fallback_stock_news_from_market_headlines(symbol, name)
+    fallback = {
+        "symbol": symbol,
+        "name": name,
+        "sector": sector,
+        "industry": industry,
+        "price": row.get("price"),
+        "market_cap": row.get("market_cap"),
+        "volume": row.get("volume"),
+        "delivery_percent": detail.get("delivery_percent", row.get("delivery_percent")),
+        "description": detail.get("description") or (
+            "Company fundamentals are temporarily unavailable in the popup cache. "
+            "Price, volume and sector data are shown from the latest dashboard row when available."
+        ),
+        "growth": detail.get("growth") or {},
+        "news": news or [],
+        "unavailable_message": detail.get("unavailable_message")
+        or "Some fundamentals are unavailable in the latest cache.",
+    }
+    return {**fallback, **{key: value for key, value in detail.items() if value not in (None, "")}}
 
 
 def _latest_statement_column(frame):
@@ -1807,8 +2017,10 @@ def _build_stock_detail_from_ticker(stock, fx_warnings=None):
             _latest_statement_column(balance_sheet),
         )
         total_debt = _financial_to_inr(total_debt, financial_currency, _latest_statement_column(balance_sheet))
+    company_name = info.get("longName") or info.get("shortName") or stock.get("name") or display_symbol
     return {
         "symbol": display_symbol,
+        "name": company_name,
         "pe_ratio": _parse_number(info.get("trailingPE")) or _parse_number(info.get("forwardPE")),
         "revenue": revenue_inr,
         "revenue_currency": "INR" if revenue_inr is not None else None,
@@ -1840,6 +2052,7 @@ def _build_stock_detail_from_ticker(stock, fx_warnings=None):
         "sector": info.get("sector") or "",
         "industry": info.get("industry") or "",
         "description": _strip_html(info.get("longBusinessSummary") or "")[:520],
+        "news": fetch_stock_news(display_symbol, company_name),
         "growth": {
             "1m": _growth_from_closes(closes, 21),
             "3m": _growth_from_closes(closes, 63),
@@ -1865,6 +2078,7 @@ def fetch_all_stock_popup_details(stocks):
                         "symbol": symbol,
                         "description": "Company details temporarily unavailable.",
                         "growth": {},
+                        "news": _fallback_stock_news_from_market_headlines(symbol, stock.get("name", "")),
                     }
     return {
         "details": details,
@@ -2284,7 +2498,7 @@ def fetch_stock_detail(display_symbol):
     if not clean_symbol:
         raise ValueError("Missing stock symbol")
     yf_symbol = clean_symbol if clean_symbol.endswith(".NS") else f"{clean_symbol}.NS"
-    return _build_stock_detail_from_ticker({"symbol": yf_symbol})
+    return _fallback_stock_detail(clean_symbol, _build_stock_detail_from_ticker({"symbol": yf_symbol}))
 
 
 def get_stock_detail(display_symbol):
@@ -2296,18 +2510,18 @@ def get_stock_detail(display_symbol):
             if key.startswith("stock_popup_details:")
         ]
     for details in popup_caches:
-        if clean_symbol in details:
-            return details[clean_symbol]
+        if clean_symbol in details and _detail_has_useful_content(details[clean_symbol]):
+            return _fallback_stock_detail(clean_symbol, details[clean_symbol])
     latest_cache = _read_persistent_cache(STOCK_POPUP_DETAILS_LATEST_KEY)
     latest_details = latest_cache.get("data", {}).get("details", {}) if latest_cache else {}
-    if clean_symbol in latest_details:
-        return latest_details[clean_symbol]
+    if clean_symbol in latest_details and _detail_has_useful_content(latest_details[clean_symbol]):
+        return _fallback_stock_detail(clean_symbol, latest_details[clean_symbol])
     data, _ = get_cached(
         f"stock_detail:{clean_symbol}",
         STOCK_DETAIL_CACHE_TTL,
         lambda: fetch_stock_detail(clean_symbol),
     )
-    return data or {}
+    return _fallback_stock_detail(clean_symbol, data)
 
 
 def apply_nifty_impact(rows, snapshot):
@@ -2611,6 +2825,89 @@ def fetch_headlines():
     return headlines[:10]
 
 
+def _format_news_timestamp(value):
+    if not value:
+        return ""
+    try:
+        return parsedate_to_datetime(value).astimezone(IST).strftime("%b %d, %I:%M %p")
+    except (TypeError, ValueError, OverflowError):
+        return ""
+
+
+def _parse_stock_news_rss(content, limit=3):
+    root = ET.fromstring(content)
+    news = []
+    for item in root.findall(".//item"):
+        title = _strip_html(item.findtext("title"))
+        link = (item.findtext("link") or "").strip()
+        source = _strip_html(item.findtext("source") or "Yahoo Finance")
+        published = _format_news_timestamp(item.findtext("pubDate"))
+        if title and link.startswith(("http://", "https://")):
+            news.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "source": source or "Yahoo Finance",
+                    "published": published,
+                }
+            )
+        if len(news) >= limit:
+            break
+    return news
+
+
+def _fallback_stock_news_from_market_headlines(symbol, company_name=""):
+    symbol = _normalize_symbol(symbol)
+    terms = {symbol.lower()}
+    for part in re.split(r"[^A-Za-z0-9]+", company_name or ""):
+        if len(part) >= 4:
+            terms.add(part.lower())
+    headlines, _ = get_cached_swr("news", NEWS_CACHE_TTL, fetch_headlines, cold_async=True)
+    matches = []
+    for item in headlines or []:
+        title = (item.get("title") or "").lower()
+        if any(term and term in title for term in terms):
+            matches.append(
+                {
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "source": item.get("source", "Market Headlines"),
+                    "published": item.get("time", ""),
+                }
+            )
+        if len(matches) >= 3:
+            break
+    return matches
+
+
+def fetch_stock_news(symbol, company_name=""):
+    clean_symbol = _normalize_symbol(symbol)
+    if not clean_symbol:
+        return []
+
+    def loader():
+        rss_symbol = clean_symbol if clean_symbol.endswith(".NS") else f"{clean_symbol}.NS"
+        url = (
+            "https://feeds.finance.yahoo.com/rss/2.0/headline?"
+            f"s={quote(rss_symbol)}&region=IN&lang=en-IN"
+        )
+        response = requests.get(
+            url,
+            timeout=6,
+            headers={"User-Agent": "Mozilla/5.0 SimplyTrading/1.0"},
+        )
+        response.raise_for_status()
+        parsed = _parse_stock_news_rss(response.content, limit=3)
+        return parsed or _fallback_stock_news_from_market_headlines(clean_symbol, company_name)
+
+    data, _ = get_cached(
+        f"stock_news:{clean_symbol}",
+        STOCK_DETAIL_CACHE_TTL,
+        loader,
+    )
+    return data or _fallback_stock_news_from_market_headlines(clean_symbol, company_name)
+
+
 def _fetch_symbol_calendar(stock):
     calendar = yf.Ticker(stock["symbol"]).calendar or {}
     earnings_dates = calendar.get("Earnings Date") or []
@@ -2712,6 +3009,30 @@ def health():
 @app.route("/api/stocks/<symbol>")
 def stock_detail_api(symbol):
     return jsonify(get_stock_detail(symbol))
+
+
+@app.route("/api/insights-data")
+def insights_data_api():
+    snapshot = _json_safe(get_cached_insights_snapshot())
+    if not snapshot:
+        return jsonify(
+            {
+                "status": "warming",
+                "snapshot": None,
+                "refreshed_at": None,
+                "stale": False,
+                "error": None,
+            }
+        )
+    return jsonify(
+        {
+            "status": snapshot.get("status", "ready"),
+            "snapshot": snapshot,
+            "refreshed_at": snapshot.get("refreshed_at") or snapshot.get("created_at"),
+            "stale": bool(snapshot.get("stale")),
+            "error": snapshot.get("error"),
+        }
+    )
 
 
 def empty_market_dashboard():
@@ -2925,27 +3246,22 @@ def dashboard():
 
 @app.route("/insights")
 def insights():
-    market_context = load_cached_market_context()
-    market = market_context["market"]
-    popup_details = get_cached_stock_popup_details_snapshot(market["rows"])
-    market = {
-        **market,
-        "hover_data": build_stock_hover_data_with_details(
-            market["rows"],
-            popup_details,
-        ),
-    }
-    deal_data, deal_data_stale = get_bulk_block_short_data()
-    insight_data = build_insights(market["rows"], deal_data or {}, popup_details)
+    snapshot = _json_safe(get_cached_insights_snapshot())
+    insight_data = (snapshot.get("insights") if snapshot else None) or empty_insights_data()
+    market = {"hover_data": snapshot.get("hover_data", {}) if snapshot else {}}
+    snapshot_status = snapshot.get("status", "ready") if snapshot else "warming"
     return render_template(
         "insights.html",
         **common_context("insights", False),
         market=market,
         insights=insight_data,
-        market_stale=market_context["market_stale"],
+        snapshot_status=snapshot_status,
+        insights_snapshot_created_at=snapshot.get("created_at") if snapshot else None,
+        insights_snapshot_error=snapshot.get("error") if snapshot else None,
+        market_stale=bool(snapshot.get("market_stale")) if snapshot else False,
         popup_details_stale=False,
-        deal_data_stale=deal_data_stale,
-        constituents_stale=market_context["constituents_stale"],
+        deal_data_stale=bool(snapshot.get("deal_data_stale") or snapshot.get("stale")) if snapshot else False,
+        constituents_stale=bool(snapshot.get("constituents_stale")) if snapshot else False,
         format_market_cap=format_market_cap,
         format_volume=format_volume,
     )
