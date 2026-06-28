@@ -40,10 +40,11 @@ NSE_NIFTY_50_API = (
 )
 NSE_FII_DII_API = "https://www.nseindia.com/api/fiidiiTradeReact"
 NSE_BULK_BLOCK_REPORT_URL = "https://www.nseindia.com/report-detail/display-bulk-and-block-deals"
+NSE_BULK_BLOCK_HISTORY_API = "https://www.nseindia.com/api/historicalOR/bulk-block-short-deals"
 NSE_HISTORICAL_DEAL_APIS = {
-    "bulk": "https://www.nseindia.com/api/historical/bulk-deals",
-    "block": "https://www.nseindia.com/api/historical/block-deals",
-    "short": "https://www.nseindia.com/api/historical/short-selling",
+    "bulk": "bulk_deals",
+    "block": "block_deals",
+    "short": "short_selling",
 }
 BULK_BLOCK_DATA_DIR = Path(__file__).resolve().parent / "bulk block short data"
 NSE_INDEX_CARD_SYMBOLS = {
@@ -1359,7 +1360,10 @@ def build_heatmap(rows):
 
 def _standardize_columns(frame):
     frame = frame.copy()
-    frame.columns = [str(column).strip() for column in frame.columns]
+    frame.columns = [
+        str(column).replace("\ufeff", "").replace("\xef\xbb\xbf", "").strip().strip('"').strip()
+        for column in frame.columns
+    ]
     return frame
 
 
@@ -1377,6 +1381,34 @@ def normalize_deal_frame(frame, kind):
     if frame is None or frame.empty:
         return pd.DataFrame(columns=["date", "symbol", "security_name", "client_name", "side", "quantity", "price", "value"])
     frame = _standardize_columns(frame)
+    if kind == "short" and {"SS_DATE", "SS_SYMBOL", "SS_QTY"}.issubset(frame.columns):
+        normalized = pd.DataFrame(
+            {
+                "date": frame.get("SS_DATE", pd.Series(dtype=object)).map(_parse_deal_date),
+                "symbol": frame.get("SS_SYMBOL", pd.Series(dtype=object)).map(_normalize_symbol),
+                "security_name": frame.get("SS_NAME", pd.Series(dtype=object)).fillna("").astype(str),
+                "quantity": frame.get("SS_QTY", pd.Series(dtype=object)).map(_parse_number),
+            }
+        )
+        normalized["quantity"] = normalized["quantity"].fillna(0)
+        return normalized.dropna(subset=["date"]).query("symbol != ''").reset_index(drop=True)
+    if kind != "short" and {"BD_DT_DATE", "BD_SYMBOL", "BD_QTY_TRD"}.issubset(frame.columns):
+        price_column = "BD_TP_WATP"
+        normalized = pd.DataFrame(
+            {
+                "date": frame.get("BD_DT_DATE", pd.Series(dtype=object)).map(_parse_deal_date),
+                "symbol": frame.get("BD_SYMBOL", pd.Series(dtype=object)).map(_normalize_symbol),
+                "security_name": frame.get("BD_SCRIP_NAME", pd.Series(dtype=object)).fillna("").astype(str),
+                "client_name": frame.get("BD_CLIENT_NAME", pd.Series(dtype=object)).fillna("").astype(str),
+                "side": frame.get("BD_BUY_SELL", pd.Series(dtype=object)).fillna("").astype(str).str.upper().str.strip(),
+                "quantity": frame.get("BD_QTY_TRD", pd.Series(dtype=object)).map(_parse_number),
+                "price": frame.get(price_column, pd.Series(dtype=object)).map(_parse_number),
+            }
+        )
+        normalized["quantity"] = normalized["quantity"].fillna(0)
+        normalized["price"] = normalized["price"].fillna(0)
+        normalized["value"] = normalized["quantity"] * normalized["price"]
+        return normalized.dropna(subset=["date"]).query("symbol != ''").reset_index(drop=True)
     if {"date", "symbol", "quantity"}.issubset(frame.columns):
         normalized = frame.copy()
         normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
@@ -1471,10 +1503,14 @@ def _frame_from_nse_payload(payload):
 
 
 def _fetch_nse_history_frame(session, kind, from_date, to_date):
-    endpoint = NSE_HISTORICAL_DEAL_APIS[kind]
     response = session.get(
-        endpoint,
-        params={"from": from_date, "to": to_date},
+        NSE_BULK_BLOCK_HISTORY_API,
+        params={
+            "optionType": NSE_HISTORICAL_DEAL_APIS[kind],
+            "from": from_date,
+            "to": to_date,
+            "csv": "true",
+        },
         timeout=20,
         headers={"Referer": NSE_BULK_BLOCK_REPORT_URL},
     )
@@ -1496,9 +1532,15 @@ def fetch_bulk_block_short_from_nse(today=None):
     frames = {}
     with requests.Session() as session:
         session.headers.update({
-            "User-Agent": "Mozilla/5.0 SimplyTrading/1.0",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/126.0.0.0 Safari/537.36"
+            ),
             "Accept": "application/json,text/csv,text/plain,*/*",
             "Accept-Language": "en-US,en;q=0.9",
+            "Referer": NSE_BULK_BLOCK_REPORT_URL,
+            "X-Requested-With": "XMLHttpRequest",
         })
         session.get(NSE_BULK_BLOCK_REPORT_URL, timeout=12)
         for kind in ("bulk", "block", "short"):

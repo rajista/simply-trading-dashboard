@@ -351,6 +351,31 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(refreshed.iloc[0]["symbol"], "AAA")
         self.assertEqual(refreshed.iloc[0]["value"], 10_000_000)
 
+    def test_normalize_deal_frame_accepts_current_nse_csv_headers(self):
+        bulk = normalize_deal_frame(pd.DataFrame([
+            {
+                '\xef\xbb\xbf"Date "': "25-JUN-2026",
+                "Symbol ": "AAA",
+                "Security Name ": "AAA Ltd",
+                "Client Name ": "Fund",
+                "Buy / Sell ": "BUY",
+                "Quantity Traded ": "1,00,000",
+                "Trade Price / Wght. Avg. Price ": "123.45",
+            }
+        ]), "bulk")
+        short = normalize_deal_frame(pd.DataFrame([
+            {
+                '\xef\xbb\xbf"Date "': "24-JUN-2026",
+                "Symbol ": "BBB",
+                "Security Name ": "BBB Ltd",
+                "Quantity ": "2,500",
+            }
+        ]), "short")
+        self.assertEqual(bulk["symbol"].iloc[0], "AAA")
+        self.assertEqual(bulk["value"].iloc[0], 12_345_000)
+        self.assertEqual(short["symbol"].iloc[0], "BBB")
+        self.assertEqual(short["quantity"].iloc[0], 2500)
+
     def test_seconds_until_next_ist_midnight(self):
         seconds = seconds_until_next_ist_midnight(datetime(2026, 6, 21, 23, 59, 0, tzinfo=IST))
         self.assertEqual(seconds, 60)
