@@ -133,45 +133,80 @@
         </table>
     </article>
 
-    <article class="panel sector-stock-panel mobile-card-table">
-        <h2>Sector-Wise Stocks & Financial Metrics</h2>
+    <article class="panel sector-stock-panel">
+        <h2>Sector Highlights</h2>
+        <p class="section-subtitle">Fast read by sector: leadership, accumulation clusters, trend participation and deal-flow pressure.</p>
         {% for sector in insights.sector_stock_tables %}
             <details class="sector-stock-group" {% if loop.index <= 3 %}open{% endif %}>
                 <summary>
                     <strong>{{ sector.sector }}</strong>
                     <span>{{ sector.stocks }} stocks</span>
+                    <span class="{{ 'positive' if sector.avg_change and sector.avg_change >= 0 else 'negative' if sector.avg_change and sector.avg_change < 0 }}">{{ "%+.2f%% avg move"|format(sector.avg_change) if sector.avg_change is not none else "avg move -" }}</span>
                     <span>{{ sector.accumulation }} accumulation</span>
                     <span>{{ sector.uptrend }} uptrend</span>
-                    <span class="{{ 'positive' if sector.avg_change and sector.avg_change >= 0 else 'negative' if sector.avg_change and sector.avg_change < 0 }}">{{ "%+.2f%% avg"|format(sector.avg_change) if sector.avg_change is not none else "- avg" }}</span>
-                    <span>P/E {{ "%.1f"|format(sector.avg_pe) if sector.avg_pe is not none else "-" }}</span>
-                    <span>ROE {{ "%.1f%%"|format(sector.avg_roe) if sector.avg_roe is not none else "-" }}</span>
+                    <span>Score {{ "%.0f"|format(sector.sector_score) }}</span>
                 </summary>
-                <div class="table-scroll sector-stock-scroll">
-                    <table>
-                        <thead><tr><th>Symbol</th><th>Price</th><th>5D</th><th>Score</th><th>Signal</th><th>P/E</th><th>P/B</th><th>ROE</th><th>ROCE</th><th>D/E</th><th>Div Yield</th><th>3Y Profit CAGR</th></tr></thead>
-                        <tbody>
-                        {% for row in sector.members %}
-                            <tr>
-                                <td data-label="Symbol" class="link stock-ticker" data-symbol="{{ row.display_symbol }}" tabindex="0">{{ row.display_symbol }}</td>
-                                <td data-label="Price">{{ "%.2f"|format(row.price) if row.price is not none else "-" }}</td>
-                                <td data-label="5D" class="{{ 'positive' if row.five_day_change and row.five_day_change >= 0 else 'negative' if row.five_day_change and row.five_day_change < 0 }}">{{ "%+.2f%%"|format(row.five_day_change) if row.five_day_change is not none else "-" }}</td>
-                                <td data-label="Score"><strong>{{ row.accumulation_score }}/3</strong> <small>{{ "%.0f"|format(row.composite_score) }}</small></td>
-                                <td data-label="Signal">{{ row.signal }}</td>
-                                <td data-label="P/E">{{ "%.1f"|format(row.detail.get("pe_ratio")) if row.detail.get("pe_ratio") is not none else "-" }}</td>
-                                <td data-label="P/B">{{ "%.2f"|format(row.detail.get("price_to_book")) if row.detail.get("price_to_book") is not none else "-" }}</td>
-                                <td data-label="ROE">{{ "%.1f%%"|format(row.detail.get("roe")) if row.detail.get("roe") is not none else "-" }}</td>
-                                <td data-label="ROCE">{{ "%.1f%%"|format(row.detail.get("roce")) if row.detail.get("roce") is not none else "-" }}</td>
-                                <td data-label="Debt/Eq">{{ "%.2f"|format(row.detail.get("debt_equity")) if row.detail.get("debt_equity") is not none else "-" }}</td>
-                                <td data-label="Div Yield">{{ "%.2f%%"|format(row.detail.get("dividend_yield")) if row.detail.get("dividend_yield") is not none else "-" }}</td>
-                                <td data-label="3Y Profit CAGR">{{ "%.1f%%"|format(row.detail.get("profit_cagr_3y")) if row.detail.get("profit_cagr_3y") is not none else "-" }}</td>
-                            </tr>
+                <div class="sector-highlight-card">
+                    <div class="sector-highlight-top">
+                        <div>
+                            <small>Leader</small>
+                            {% if sector.leader %}
+                                <b class="link stock-ticker" data-symbol="{{ sector.leader.display_symbol }}" tabindex="0">{{ sector.leader.display_symbol }}</b>
+                                <span class="{{ 'positive' if sector.leader.percent is not none and sector.leader.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(sector.leader.percent) if sector.leader.percent is not none else "-" }}</span>
+                            {% else %}
+                                <b>-</b><span>-</span>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <small>Laggard</small>
+                            {% if sector.laggard %}
+                                <b class="link stock-ticker" data-symbol="{{ sector.laggard.display_symbol }}" tabindex="0">{{ sector.laggard.display_symbol }}</b>
+                                <span class="{{ 'positive' if sector.laggard.percent is not none and sector.laggard.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(sector.laggard.percent) if sector.laggard.percent is not none else "-" }}</span>
+                            {% else %}
+                                <b>-</b><span>-</span>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <small>Bulk Net 30D</small>
+                            <b class="{{ 'positive' if sector.bulk_net30 >= 0 else 'negative' }}">Rs {{ format_market_cap(sector.bulk_net30|abs) }}</b>
+                            <span>{{ sector.conflicts }} conflicts</span>
+                        </div>
+                        <div>
+                            <small>Short Qty 30D</small>
+                            <b>{{ format_volume(sector.short_qty30) }}</b>
+                            <span>tracked pressure</span>
+                        </div>
+                    </div>
+                    <div class="sector-progress-grid">
+                        <div>
+                            <span>Accumulation Cluster <b>{{ sector.accumulation }}/{{ sector.stocks }}</b></span>
+                            <i><em style="width: {{ sector.accumulation_ratio }}%"></em></i>
+                        </div>
+                        <div>
+                            <span>Uptrend Participation <b>{{ sector.uptrend }}/{{ sector.stocks }}</b></span>
+                            <i><em style="width: {{ sector.uptrend_ratio }}%"></em></i>
+                        </div>
+                    </div>
+                    <div class="sector-watchlist">
+                        {% for row in sector.watchlist %}
+                            <button type="button" class="sector-watch-chip stock-ticker" data-symbol="{{ row.display_symbol }}">
+                                <strong>{{ row.display_symbol }}</strong>
+                                <span class="{{ 'positive' if row.five_day_change is not none and row.five_day_change >= 0 else 'negative' if row.five_day_change is not none else '' }}">{{ "%+.2f%% 5D"|format(row.five_day_change) if row.five_day_change is not none else "5D -" }}</span>
+                                <small>{{ row.accumulation_score }}/3 acc · {{ row.signal }}</small>
+                            </button>
                         {% endfor %}
-                        </tbody>
-                    </table>
+                    </div>
+                    {% if sector.watchlist and sector.watchlist[0].drivers %}
+                        <p class="sector-takeaway">{{ sector.watchlist[0].display_symbol }}: {{ sector.watchlist[0].drivers[0] }}</p>
+                    {% elif sector.accumulation %}
+                        <p class="sector-takeaway">{{ sector.accumulation }} stocks in this sector show accumulation setups.</p>
+                    {% else %}
+                        <p class="sector-takeaway">No broad accumulation cluster yet; watch for improving participation.</p>
+                    {% endif %}
                 </div>
             </details>
         {% else %}
-            <div class="unavailable">Sector-wise stock metrics are unavailable in the current cache.</div>
+            <div class="unavailable">Sector highlights are unavailable in the current cache.</div>
         {% endfor %}
     </article>
 

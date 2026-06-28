@@ -2575,16 +2575,48 @@ def build_insights(rows, deal_data=None, details=None):
             ),
             reverse=True,
         )
+        leader = max(
+            members,
+            key=lambda row: row.get("percent") if row.get("percent") is not None else -999,
+        ) if members else None
+        laggard = min(
+            members,
+            key=lambda row: row.get("percent") if row.get("percent") is not None else 999,
+        ) if members else None
+        sector_accumulation = len([row for row in members if (row.get("accumulation_score") or 0) >= 2])
+        sector_uptrend = len([row for row in members if row.get("signal") == "Uptrend"])
+        sector_bulk_net30 = sum(row["deal"]["bulk_net30"] for row in members)
+        sector_block_net90 = sum(row["deal"]["block_net90"] for row in members)
+        sector_short_qty30 = sum(row["deal"]["short_qty30"] for row in members)
+        sector_conflicts = sum(len(row.get("conflicts", [])) for row in members)
+        sector_score = (
+            sector_accumulation * 12
+            + sector_uptrend * 5
+            + sum(max(row.get("five_day_change") or 0, 0) for row in members)
+            + (4 if sector_bulk_net30 > 0 else -4 if sector_bulk_net30 < 0 else 0)
+            + (4 if sector_block_net90 > 0 else -4 if sector_block_net90 < 0 else 0)
+            - min(sector_conflicts * 2, 12)
+        )
         sector_stock_tables.append(
             {
                 "sector": sector,
                 "stocks": len(members),
-                "accumulation": len([row for row in members if (row.get("accumulation_score") or 0) >= 2]),
-                "uptrend": len([row for row in members if row.get("signal") == "Uptrend"]),
+                "accumulation": sector_accumulation,
+                "uptrend": sector_uptrend,
                 "avg_change": (
                     sum(row.get("percent", 0) or 0 for row in members) / len(members)
                     if members else None
                 ),
+                "leader": leader,
+                "laggard": laggard,
+                "watchlist": ordered_members[:5],
+                "bulk_net30": sector_bulk_net30,
+                "block_net90": sector_block_net90,
+                "short_qty30": sector_short_qty30,
+                "conflicts": sector_conflicts,
+                "sector_score": round(sector_score, 1),
+                "accumulation_ratio": sector_accumulation / len(members) * 100 if members else 0,
+                "uptrend_ratio": sector_uptrend / len(members) * 100 if members else 0,
                 "avg_pe": _average_detail_metric(members, "pe_ratio"),
                 "avg_roe": _average_detail_metric(members, "roe"),
                 "avg_roce": _average_detail_metric(members, "roce"),

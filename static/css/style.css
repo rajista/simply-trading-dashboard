@@ -1083,6 +1083,11 @@ tbody tr:hover { background: #2a303d; }
     margin-bottom: 7px;
     color: var(--muted);
 }
+.section-subtitle {
+    margin: -3px 0 8px;
+    color: #9ba3b5;
+    font-size: 10px;
+}
 .deal-meta {
     display: flex;
     flex-wrap: wrap;
@@ -1122,8 +1127,6 @@ tbody tr:hover { background: #2a303d; }
 .insight-table-scroll { max-height: none; }
 .insights-table table { min-width: 760px; }
 .conviction-table table { min-width: 1060px; }
-.sector-stock-scroll { max-height: 360px; }
-.sector-stock-scroll table { min-width: 1120px; }
 .sector-stock-group {
     overflow: hidden;
     border-top: 1px solid #303744;
@@ -1152,6 +1155,109 @@ tbody tr:hover { background: #2a303d; }
 .sector-stock-group small {
     color: var(--muted);
     font-weight: 400;
+}
+.sector-highlight-card {
+    display: grid;
+    gap: 8px;
+    padding: 9px;
+    border: 1px solid rgba(255, 255, 255, .07);
+    border-radius: 5px;
+    background:
+        linear-gradient(135deg, rgba(41, 98, 255, .08), rgba(38, 166, 154, .04)),
+        #171d28;
+}
+.sector-highlight-top {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 7px;
+}
+.sector-highlight-top > div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: 7px;
+    border: 1px solid #303744;
+    border-radius: 4px;
+    background: #101722;
+}
+.sector-highlight-top small,
+.sector-progress-grid span,
+.sector-watch-chip small {
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 9px;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.sector-highlight-top b {
+    overflow: hidden;
+    color: #e3e7f0;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sector-highlight-top span { color: #aeb6c7; font-size: 10px; }
+.sector-progress-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+.sector-progress-grid > div {
+    display: grid;
+    gap: 4px;
+}
+.sector-progress-grid span {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+.sector-progress-grid span b { color: var(--text); }
+.sector-progress-grid i {
+    display: block;
+    height: 7px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: #2a2e39;
+}
+.sector-progress-grid em {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--gain));
+}
+.sector-watchlist {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+}
+.sector-watch-chip {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: 7px;
+    border: 1px solid rgba(74, 168, 255, .25);
+    border-radius: 4px;
+    background: #101722;
+    color: var(--text);
+    text-align: left;
+    cursor: help;
+}
+.sector-watch-chip strong {
+    overflow: hidden;
+    color: var(--link);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sector-watch-chip span { font-size: 11px; }
+.sector-watch-chip small { white-space: normal; }
+.sector-takeaway {
+    margin: 0;
+    padding: 6px 8px;
+    border-left: 3px solid var(--accent);
+    background: rgba(41, 98, 255, .08);
+    color: #c6cedd;
+    line-height: 1.35;
 }
 .deal-flow-panel table { table-layout: fixed; }
 .deal-flow-panel td:first-child,
@@ -1370,8 +1476,7 @@ tbody tr:hover { background: #2a303d; }
         overflow-x: auto;
     }
     .mobile-card-table .table-scroll,
-    .mobile-card-table.insight-table-scroll,
-    .mobile-card-table .sector-stock-scroll {
+    .mobile-card-table.insight-table-scroll {
         max-height: none;
         overflow: visible;
     }
@@ -1434,6 +1539,13 @@ tbody tr:hover { background: #2a303d; }
     .sector-stock-group summary strong {
         grid-column: 1 / -1;
         min-width: 0;
+    }
+    .sector-highlight-top,
+    .sector-progress-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .sector-watchlist {
+        grid-template-columns: minmax(0, 1fr);
     }
     .deal-meta { flex-direction: column; gap: 4px; }
     .range-grid, .growth-grid, .fund-grid, .advanced-grid, .ownership-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
