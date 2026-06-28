@@ -25,6 +25,7 @@ from app import (
     compute_quiet_pullback,
     compute_volume_range_signal,
     empty_insights_data,
+    insights_snapshot_needs_nse_refresh,
     apply_nifty_impact,
     apply_nse_quote_snapshot,
     fetch_nse_nifty50_snapshot,
@@ -614,6 +615,18 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertTrue(ready["stale"])
 
+    @patch("app.ensure_insights_snapshot_refresh_async")
+    @patch("app.get_cached_insights_snapshot")
+    def test_insights_data_api_refreshes_local_seed_snapshot(self, snapshot, refresh_async):
+        snapshot.return_value = {
+            "status": "ready",
+            "created_at": "now",
+            "insights": {"deal_meta": {"source": "local CSV seed"}},
+        }
+        ready = self.client.get("/api/insights-data").get_json()
+        self.assertEqual(ready["status"], "ready")
+        refresh_async.assert_called_once()
+
     @patch("app.refresh_insights_snapshot")
     @patch("app.refresh_bulk_block_short_cache_from_nse")
     def test_daily_insights_refresh_runs_after_nse_refresh(self, bulk_refresh, insights_refresh):
@@ -630,6 +643,10 @@ class RouteTests(unittest.TestCase):
         start_insights_snapshot_refresh_scheduler()
         refresh_async.assert_called_once()
         app_module._INSIGHTS_SNAPSHOT_REFRESH_STARTED = False
+
+    def test_local_seed_snapshot_needs_nse_refresh(self):
+        self.assertTrue(insights_snapshot_needs_nse_refresh({"insights": {"deal_meta": {"source": "local CSV seed"}}}))
+        self.assertFalse(insights_snapshot_needs_nse_refresh({"insights": {"deal_meta": {"source": "NSE archive refresh"}}}))
 
     def test_stock_news_rss_parser_sanitizes_items(self):
         rss = b"""<?xml version="1.0"?><rss><channel><item><title><![CDATA[<b>INFY</b> wins deal]]></title><link>https://example.com/infy</link><source>Yahoo</source><pubDate>Fri, 26 Jun 2026 10:00:00 GMT</pubDate></item></channel></rss>"""

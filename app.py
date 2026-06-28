@@ -1650,6 +1650,15 @@ def get_cached_insights_snapshot():
     return None
 
 
+def insights_snapshot_needs_nse_refresh(snapshot):
+    if not isinstance(snapshot, dict):
+        return True
+    insights = snapshot.get("insights") or {}
+    deal_meta = insights.get("deal_meta") or snapshot.get("deal_meta") or {}
+    source = str(deal_meta.get("source") or "").strip().lower()
+    return source in {"", "warming", "local csv seed", "refresh failed"}
+
+
 def store_insights_snapshot(snapshot):
     snapshot = _json_safe({
         "status": snapshot.get("status", "ready"),
@@ -1770,7 +1779,7 @@ def _insights_snapshot_refresh_worker(delay=0):
     if delay:
         time_module.sleep(delay)
     try:
-        refresh_insights_snapshot()
+        refresh_daily_insights_snapshot()
     except Exception as exc:
         store_insights_error_snapshot(exc)
     finally:
@@ -1830,7 +1839,8 @@ def start_insights_snapshot_refresh_scheduler():
     ):
         return
     _INSIGHTS_SNAPSHOT_REFRESH_STARTED = True
-    if not get_cached_insights_snapshot():
+    snapshot = get_cached_insights_snapshot()
+    if insights_snapshot_needs_nse_refresh(snapshot):
         ensure_insights_snapshot_refresh_async(
             delay=max(0, STARTUP_INSIGHTS_SNAPSHOT_REFRESH_DELAY)
         )
@@ -3170,6 +3180,8 @@ def insights_data_api():
                 "error": None,
             }
         )
+    if insights_snapshot_needs_nse_refresh(snapshot):
+        ensure_insights_snapshot_refresh_async()
     return jsonify(
         {
             "status": snapshot.get("status", "ready"),
@@ -3394,6 +3406,8 @@ def dashboard():
 def insights():
     snapshot = _json_safe(get_cached_insights_snapshot())
     if not snapshot:
+        ensure_insights_snapshot_refresh_async()
+    elif insights_snapshot_needs_nse_refresh(snapshot):
         ensure_insights_snapshot_refresh_async()
     insight_data = (snapshot.get("insights") if snapshot else None) or empty_insights_data()
     market = {"hover_data": snapshot.get("hover_data", {}) if snapshot else {}}
