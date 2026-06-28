@@ -41,6 +41,7 @@ from app import (
     normalize_fii_dii_activity,
     parse_nse_index_card,
     refresh_daily_insights_snapshot,
+    start_insights_snapshot_refresh_scheduler,
     seconds_until_next_ist_midnight,
 )
 
@@ -564,21 +565,25 @@ class RouteTests(unittest.TestCase):
         market_loader.assert_not_called()
         insight_builder.assert_not_called()
 
+    @patch("app.ensure_insights_snapshot_refresh_async")
     @patch("app.build_insights")
     @patch("app.load_cached_market_context")
     @patch("app.get_cached_insights_snapshot", return_value=None)
-    def test_insights_route_warming_shell_is_lightweight(self, snapshot, market_loader, insight_builder):
+    def test_insights_route_warming_shell_is_lightweight(self, snapshot, market_loader, insight_builder, refresh_async):
         html = self.client.get("/insights").get_data(as_text=True)
         self.assertIn("snapshot warming", html)
         self.assertIn("Preparing the latest Insights snapshot", html)
+        refresh_async.assert_called_once()
         market_loader.assert_not_called()
         insight_builder.assert_not_called()
 
+    @patch("app.ensure_insights_snapshot_refresh_async")
     @patch("app.get_cached_insights_snapshot")
-    def test_insights_data_api_ready_and_warming(self, snapshot):
+    def test_insights_data_api_ready_and_warming(self, snapshot, refresh_async):
         snapshot.return_value = None
         warming = self.client.get("/api/insights-data").get_json()
         self.assertEqual(warming["status"], "warming")
+        refresh_async.assert_called_once()
         snapshot.return_value = {"status": "ready", "created_at": "now", "stale": True, "error": "old"}
         ready = self.client.get("/api/insights-data").get_json()
         self.assertEqual(ready["status"], "ready")
@@ -591,6 +596,15 @@ class RouteTests(unittest.TestCase):
         refresh_daily_insights_snapshot()
         bulk_refresh.assert_called_once()
         insights_refresh.assert_called_once_with(deal_data={"source": "fresh"})
+
+    @patch("app.ensure_insights_snapshot_refresh_async")
+    @patch("app.get_cached_insights_snapshot", return_value=None)
+    def test_startup_insights_refresh_backfills_missing_snapshot(self, snapshot, refresh_async):
+        import app as app_module
+        app_module._INSIGHTS_SNAPSHOT_REFRESH_STARTED = False
+        start_insights_snapshot_refresh_scheduler()
+        refresh_async.assert_called_once()
+        app_module._INSIGHTS_SNAPSHOT_REFRESH_STARTED = False
 
     def test_stock_news_rss_parser_sanitizes_items(self):
         rss = b"""<?xml version="1.0"?><rss><channel><item><title><![CDATA[<b>INFY</b> wins deal]]></title><link>https://example.com/infy</link><source>Yahoo</source><pubDate>Fri, 26 Jun 2026 10:00:00 GMT</pubDate></item></channel></rss>"""

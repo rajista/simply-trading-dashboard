@@ -260,6 +260,9 @@ MAX_ASYNC_POPUP_DETAIL_PREFETCH = 75
 STOCK_DETAIL_WORKERS = int(os.getenv("STOCK_DETAIL_WORKERS", "3"))
 STARTUP_MARKET_REFRESH_DELAY = int(os.getenv("STARTUP_MARKET_REFRESH_DELAY_SECONDS", "10"))
 STARTUP_STOCK_DETAIL_REFRESH_DELAY = int(os.getenv("STARTUP_STOCK_DETAIL_REFRESH_DELAY_SECONDS", "300"))
+STARTUP_INSIGHTS_SNAPSHOT_REFRESH_DELAY = int(
+    os.getenv("STARTUP_INSIGHTS_SNAPSHOT_REFRESH_DELAY_SECONDS", "45")
+)
 REPORTED_FINANCIAL_OVERRIDES = {
     "INFY": {
         "period": "2026-03-31",
@@ -273,6 +276,7 @@ _CACHE_REFRESHING = set()
 _BULK_BLOCK_REFRESH_STARTED = False
 _STOCK_DETAIL_REFRESH_STARTED = False
 _MARKET_REFRESH_STARTED = False
+_INSIGHTS_SNAPSHOT_REFRESH_STARTED = False
 
 
 def _cache_file_path(key):
@@ -1618,14 +1622,70 @@ def store_insights_snapshot(snapshot):
     return snapshot
 
 
+def store_insights_error_snapshot(error):
+    created_at = datetime.now(IST).strftime("%Y-%m-%d %H:%M IST")
+    insights = empty_insights_data()
+    insights["top_lines"] = [
+        "Insights snapshot could not be fully refreshed. The system will retry automatically.",
+        f"Last refresh error: {error}",
+    ]
+    insights["deal_meta"] = {
+        **insights["deal_meta"],
+        "source": "refresh failed",
+        "refreshed_at": created_at,
+    }
+    return store_insights_snapshot(
+        {
+            "status": "ready",
+            "insights": insights,
+            "hover_data": {},
+            "deal_meta": insights["deal_meta"],
+            "created_at": created_at,
+            "refreshed_at": created_at,
+            "stale": True,
+            "error": str(error),
+            "market_stale": True,
+            "deal_data_stale": True,
+            "constituents_stale": True,
+        }
+    )
+
+
+def _market_for_insights_snapshot():
+    try:
+        return refresh_market_dashboard_cache(), False, False, None
+    except Exception as refresh_error:
+        try:
+            context = load_cached_market_context()
+            market = context.get("market") or empty_market_dashboard()
+            return (
+                market,
+                True,
+                bool(context.get("constituents_stale")),
+                str(refresh_error),
+            )
+        except Exception as cache_error:
+            return (
+                empty_market_dashboard(),
+                True,
+                True,
+                f"{refresh_error}; cached market fallback failed: {cache_error}",
+            )
+
+
 def refresh_insights_snapshot(deal_data=None, market=None, stale=False, error=None):
     if deal_data is None:
         deal_data = read_bulk_block_short_files()
-    market = market or refresh_market_dashboard_cache()
+    market_error = None
+    market_stale = False
+    constituents_stale = False
+    if market is None:
+        market, market_stale, constituents_stale, market_error = _market_for_insights_snapshot()
     rows = market.get("rows", []) if isinstance(market, dict) else []
     popup_details = get_cached_stock_popup_details_snapshot(rows)
     insight_data = build_insights(rows, deal_data or {}, popup_details)
     created_at = datetime.now(IST).strftime("%Y-%m-%d %H:%M IST")
+    combined_error = "; ".join(str(item) for item in (error, market_error) if item)
     snapshot = {
         "status": "ready",
         "insights": insight_data,
@@ -1633,11 +1693,11 @@ def refresh_insights_snapshot(deal_data=None, market=None, stale=False, error=No
         "deal_meta": insight_data.get("deal_meta", {}),
         "created_at": created_at,
         "refreshed_at": created_at,
-        "stale": bool(stale),
-        "error": error,
-        "market_stale": False,
+        "stale": bool(stale or market_stale or combined_error),
+        "error": combined_error or None,
+        "market_stale": bool(market_stale),
         "deal_data_stale": bool(stale),
-        "constituents_stale": False,
+        "constituents_stale": bool(constituents_stale),
     }
     return store_insights_snapshot(snapshot)
 
@@ -1658,7 +1718,36 @@ def refresh_daily_insights_snapshot():
                     "error": str(exc),
                 }
             )
-        return None
+        try:
+            return refresh_insights_snapshot(stale=True, error=f"NSE refresh failed: {exc}")
+        except Exception as fallback_exc:
+            return store_insights_error_snapshot(f"{exc}; snapshot fallback failed: {fallback_exc}")
+
+
+def _insights_snapshot_refresh_worker(delay=0):
+    if delay:
+        time_module.sleep(delay)
+    try:
+        refresh_insights_snapshot()
+    except Exception as exc:
+        store_insights_error_snapshot(exc)
+    finally:
+        with _CACHE_LOCK:
+            _CACHE_REFRESHING.discard(INSIGHTS_SNAPSHOT_KEY)
+
+
+def ensure_insights_snapshot_refresh_async(delay=0):
+    with _CACHE_LOCK:
+        if INSIGHTS_SNAPSHOT_KEY in _CACHE_REFRESHING:
+            return False
+        _CACHE_REFRESHING.add(INSIGHTS_SNAPSHOT_KEY)
+    threading.Thread(
+        target=_insights_snapshot_refresh_worker,
+        kwargs={"delay": delay},
+        daemon=True,
+        name="insights-snapshot-refresh",
+    ).start()
+    return True
 
 
 def seconds_until_next_ist_midnight(now=None):
@@ -1689,6 +1778,20 @@ def start_bulk_block_refresh_scheduler():
         daemon=True,
         name="bulk-block-short-midnight-refresh",
     ).start()
+
+
+def start_insights_snapshot_refresh_scheduler():
+    global _INSIGHTS_SNAPSHOT_REFRESH_STARTED
+    if (
+        _INSIGHTS_SNAPSHOT_REFRESH_STARTED
+        or os.getenv("DISABLE_INSIGHTS_SNAPSHOT_REFRESH") == "1"
+    ):
+        return
+    _INSIGHTS_SNAPSHOT_REFRESH_STARTED = True
+    if not get_cached_insights_snapshot():
+        ensure_insights_snapshot_refresh_async(
+            delay=max(0, STARTUP_INSIGHTS_SNAPSHOT_REFRESH_DELAY)
+        )
 
 
 def get_bulk_block_short_data():
@@ -3015,6 +3118,7 @@ def stock_detail_api(symbol):
 def insights_data_api():
     snapshot = _json_safe(get_cached_insights_snapshot())
     if not snapshot:
+        ensure_insights_snapshot_refresh_async()
         return jsonify(
             {
                 "status": "warming",
@@ -3247,6 +3351,8 @@ def dashboard():
 @app.route("/insights")
 def insights():
     snapshot = _json_safe(get_cached_insights_snapshot())
+    if not snapshot:
+        ensure_insights_snapshot_refresh_async()
     insight_data = (snapshot.get("insights") if snapshot else None) or empty_insights_data()
     market = {"hover_data": snapshot.get("hover_data", {}) if snapshot else {}}
     snapshot_status = snapshot.get("status", "ready") if snapshot else "warming"
@@ -3318,6 +3424,7 @@ if should_start_background_jobs():
     start_bulk_block_refresh_scheduler()
     start_stock_detail_refresh_scheduler()
     start_market_refresh_scheduler()
+    start_insights_snapshot_refresh_scheduler()
 
 
 if __name__ == "__main__":
