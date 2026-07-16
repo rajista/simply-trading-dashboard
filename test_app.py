@@ -29,6 +29,7 @@ from app import (
     apply_nifty_impact,
     apply_nse_quote_snapshot,
     fetch_nse_nifty50_snapshot,
+    fetch_nse_nifty500_snapshot,
     fetch_nifty50_constituents,
     fetch_nifty500_constituents,
     format_crore_value,
@@ -256,15 +257,36 @@ class DataModelTests(unittest.TestCase):
         )
 
     def test_nse_snapshot_hydrates_live_quote_fields(self):
-        rows = [{"display_symbol": "RELIANCE", "price": None, "change": None, "percent": None, "volume": None}]
+        rows = [{
+            "display_symbol": "RELIANCE",
+            "price": None,
+            "change": None,
+            "percent": None,
+            "volume": None,
+            "day_open": None,
+            "day_high": None,
+            "day_low": None,
+        }]
         apply_nse_quote_snapshot(
             rows,
-            [{"symbol": "RELIANCE", "lastPrice": "1,450.5", "change": "12.3", "pChange": "0.85", "totalTradedVolume": "123456"}],
+            [{
+                "symbol": "RELIANCE",
+                "lastPrice": "1,450.5",
+                "change": "12.3",
+                "pChange": "0.85",
+                "totalTradedVolume": "123456",
+                "open": "1,440",
+                "dayHigh": "1,460",
+                "dayLow": "1,435",
+            }],
         )
         self.assertEqual(rows[0]["price"], 1450.5)
         self.assertEqual(rows[0]["change"], 12.3)
         self.assertEqual(rows[0]["percent"], 0.85)
         self.assertEqual(rows[0]["volume"], 123456)
+        self.assertEqual(rows[0]["day_open"], 1440)
+        self.assertEqual(rows[0]["day_high"], 1460)
+        self.assertEqual(rows[0]["day_low"], 1435)
 
     def test_nse_index_card_parser_uses_ltp_change_and_previous_close_basis(self):
         card = parse_nse_index_card(
@@ -393,6 +415,18 @@ class DataModelTests(unittest.TestCase):
         }
         self.assertEqual(fetch_nse_nifty50_snapshot()[0]["symbol"], "RELIANCE")
         self.assertEqual(session.get.call_count, 2)
+
+    @patch("app.fetch_nse_index_snapshot")
+    def test_nifty500_snapshot_requires_full_constituent_set(self, snapshot):
+        snapshot.return_value = [
+            {"symbol": "NIFTY 500"},
+            *({"symbol": f"STOCK{index}"} for index in range(500)),
+        ]
+        self.assertEqual(len(fetch_nse_nifty500_snapshot()), 501)
+
+        snapshot.return_value = [{"symbol": f"STOCK{index}"} for index in range(449)]
+        with self.assertRaises(ValueError):
+            fetch_nse_nifty500_snapshot()
 
     def test_cache_returns_stale_data_after_failure(self):
         _CACHE.clear()

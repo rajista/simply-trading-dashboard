@@ -38,6 +38,10 @@ NSE_NIFTY_50_API = (
     "https://www.nseindia.com/api/"
     "equity-stock-indices?index=NIFTY%2050"
 )
+NSE_NIFTY_500_API = (
+    "https://www.nseindia.com/api/"
+    "equity-stock-indices?index=NIFTY%20500"
+)
 NSE_FII_DII_API = "https://www.nseindia.com/api/fiidiiTradeReact"
 NSE_BULK_BLOCK_REPORT_URL = "https://www.nseindia.com/report-detail/display-bulk-and-block-deals"
 NSE_BULK_BLOCK_HISTORY_API = "https://www.nseindia.com/api/historicalOR/bulk-block-short-deals"
@@ -447,7 +451,7 @@ def fetch_nifty500_constituents():
     return fetch_index_constituents(NIFTY_500_URL, 500)
 
 
-def fetch_nse_nifty50_snapshot():
+def fetch_nse_index_snapshot(api_url, index_name):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -458,18 +462,37 @@ def fetch_nse_nifty50_snapshot():
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": (
             "https://www.nseindia.com/market-data/"
-            "live-equity-market?symbol=NIFTY%2050"
+            f"live-equity-market?symbol={quote(index_name)}"
         ),
     }
     with requests.Session() as session:
         session.headers.update(headers)
         session.get(NSE_HOME_URL, timeout=10).raise_for_status()
-        response = session.get(NSE_NIFTY_50_API, timeout=12)
+        response = session.get(api_url, timeout=15)
         response.raise_for_status()
         payload = response.json()
     rows = payload.get("data")
     if not isinstance(rows, list):
-        raise ValueError("NSE NIFTY 50 response has no data rows")
+        raise ValueError(f"NSE {index_name} response has no data rows")
+    return rows
+
+
+def fetch_nse_nifty50_snapshot():
+    return fetch_nse_index_snapshot(NSE_NIFTY_50_API, "NIFTY 50")
+
+
+def fetch_nse_nifty500_snapshot():
+    rows = fetch_nse_index_snapshot(NSE_NIFTY_500_API, "NIFTY 500")
+    constituent_rows = [
+        row
+        for row in rows
+        if str(row.get("symbol") or row.get("identifier") or "").strip().upper()
+        not in {"NIFTY 500", "NIFTY500"}
+    ]
+    if len(constituent_rows) < 450:
+        raise ValueError(
+            f"NSE NIFTY 500 response has only {len(constituent_rows)} constituent rows"
+        )
     return rows
 
 
@@ -809,6 +832,9 @@ def apply_nse_quote_snapshot(rows, snapshot):
         change = _parse_number(item.get("change"))
         percent = _parse_number(item.get("pChange"))
         volume = _parse_number(item.get("totalTradedVolume"))
+        day_open = _parse_number(item.get("open"))
+        day_high = _parse_number(item.get("dayHigh"))
+        day_low = _parse_number(item.get("dayLow"))
         delivery_percent = _parse_number(
             item.get("deliveryToTradedQuantity")
             or item.get("deliveryQuantityToTradedQuantity")
@@ -822,6 +848,12 @@ def apply_nse_quote_snapshot(rows, snapshot):
             row["percent"] = percent
         if volume is not None:
             row["volume"] = volume
+        if day_open is not None:
+            row["day_open"] = day_open
+        if day_high is not None:
+            row["day_high"] = day_high
+        if day_low is not None:
+            row["day_low"] = day_low
         if delivery_percent is not None:
             row["delivery_percent"] = delivery_percent
     return rows
@@ -2789,6 +2821,8 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
     rows_by_symbol = {row["symbol"]: row for row in all_rows}
     rows = [rows_by_symbol[stock["symbol"]] for stock in stocks if stock["symbol"] in rows_by_symbol]
     broad_rows = [rows_by_symbol[stock["symbol"]] for stock in broad_stocks if stock["symbol"] in rows_by_symbol]
+    broad_snapshot = fetch_nse_nifty500_snapshot()
+    apply_nse_quote_snapshot(broad_rows, broad_snapshot)
     impact_available = False
     try:
         nse_snapshot = nse_snapshot or fetch_nse_nifty50_snapshot()
