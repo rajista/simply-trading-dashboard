@@ -1888,10 +1888,22 @@ def _json_safe(value):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
+    if isinstance(value, pd.Series):
+        return [_json_safe(item) for item in value.tolist()]
+    if isinstance(value, pd.DataFrame):
+        return [_json_safe(item) for item in value.to_dict(orient="records")]
     if isinstance(value, (pd.Timestamp, datetime)):
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
+    if type(value).__module__.startswith("numpy"):
+        try:
+            return _json_safe(value.item())
+        except (AttributeError, TypeError, ValueError):
+            try:
+                return _json_safe(value.tolist())
+            except (AttributeError, TypeError, ValueError):
+                return str(value)
     if isinstance(value, bool) or type(value).__name__ == "bool_":
         return bool(value)
     try:

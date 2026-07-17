@@ -4,12 +4,14 @@ import time
 from unittest.mock import patch
 
 import pandas as pd
+import numpy as np
 
 from stocks import STOCKS
 from app import (
     IST,
     _CACHE,
     _filter_company_news,
+    _json_safe,
     _parse_stock_news_rss,
     app,
     build_breadth,
@@ -147,6 +149,11 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(len(candles), 2)
         self.assertTrue(candles[0]["up"])
         self.assertFalse(candles[1]["up"])
+
+    def test_json_safe_converts_numpy_scalars_and_arrays(self):
+        converted = _json_safe({"flag": np.bool_(True), "values": np.array([1, 2])})
+        self.assertEqual(converted, {"flag": True, "values": [1, 2]})
+        self.assertIs(type(converted["flag"]), bool)
 
     def test_accumulation_helpers_handle_positive_and_insufficient_cases(self):
         closes = pd.Series([100, 101, 100.5, 101.2, 100.8, 101.1, 100.9, 101.3, 101.0, 101.4,
