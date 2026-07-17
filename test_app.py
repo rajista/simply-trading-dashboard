@@ -21,6 +21,8 @@ from app import (
     build_dashboard_notes,
     build_heatmap,
     build_insights,
+    build_fii_dii_flow_insights,
+    build_institutional_deal_trends,
     build_sector_performance,
     build_stock_hover_data_with_details,
     build_stock_rows,
@@ -28,6 +30,7 @@ from app import (
     compute_obv_divergence,
     compute_quiet_pullback,
     compute_volume_range_signal,
+    classify_institutional_client,
     empty_insights_data,
     insights_snapshot_needs_nse_refresh,
     apply_nifty_impact,
@@ -45,6 +48,7 @@ from app import (
     _financial_to_inr,
     normalize_deal_frame,
     normalize_fii_dii_activity,
+    normalize_fii_dii_history,
     parse_nse_index_card,
     refresh_daily_insights_snapshot,
     start_insights_snapshot_refresh_scheduler,
@@ -351,6 +355,28 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(rows[1]["category"], "FII/FPI")
         self.assertEqual(format_crore_value(rows[1]["net"]), "Rs -749.18 Cr")
 
+    def test_fii_dii_history_normalizes_and_builds_period_coverage(self):
+        rows = normalize_fii_dii_history([
+            {"d": "17-Jul-2026", "fn": -376.41, "dn": 1017.89, "fb": 14393.77, "fs": 14770.18},
+            {"d": "16-Jul-2026", "fn": -4205.56, "dn": 2986.41},
+        ])
+        insights = build_fii_dii_flow_insights(rows, {})
+        self.assertEqual(insights["history"][-1]["date"], "2026-07-17")
+        self.assertEqual(insights["periods"][0]["sessions"], 2)
+        self.assertFalse(insights["periods"][2]["complete"])
+
+    def test_institutional_deals_classify_explicit_clients_and_rank_stocks(self):
+        self.assertEqual(classify_institutional_client("Axis Mutual Fund"), "DII")
+        self.assertEqual(classify_institutional_client("Vanguard Emerging Markets Stock Index Fund"), "FII/FPI")
+        self.assertIsNone(classify_institutional_client("Example Capital Private Limited"))
+        frame = pd.DataFrame([
+            {"date": "2026-07-17", "symbol": "AAA", "security_name": "AAA Ltd", "client_name": "Axis Mutual Fund", "side": "BUY", "quantity": 100, "price": 200, "value": 20_000},
+            {"date": "2026-07-17", "symbol": "BBB", "security_name": "BBB Ltd", "client_name": "Vanguard Emerging Markets Stock Index Fund", "side": "SELL", "quantity": 200, "price": 300, "value": 60_000},
+        ])
+        trends = build_institutional_deal_trends({"bulk": frame, "block": pd.DataFrame()})
+        self.assertEqual(trends["periods"]["latest"]["categories"]["DII"]["buy"][0]["symbol"], "AAA")
+        self.assertEqual(trends["periods"]["latest"]["categories"]["FII/FPI"]["sell"][0]["symbol"], "BBB")
+
     def test_sector_performance_includes_expandable_members(self):
         rows = [
             {"sector": "Tech", "display_symbol": "AAA", "name": "AAA Ltd", "price": 10, "percent": 2, "volume": 100, "signal": "Uptrend"},
@@ -588,11 +614,13 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260717-5", html)
-        self.assertIn("/static/js/dashboard.js?v=20260717-5", html)
+        self.assertIn("/static/css/style.css?v=20260717-6", html)
+        self.assertIn("/static/js/dashboard.js?v=20260717-6", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
+        self.assertIn("FII / DII Cash Flow &amp; Disclosed Deals", html)
+        self.assertIn("data-fii-dii-open", html)
         self.assertIn("Dashboard Insights", html)
         self.assertIn("Dashboard notes will appear", html)
         self.assertIn("Operating Margin", html)
@@ -800,6 +828,20 @@ class RouteTests(unittest.TestCase):
         response = self.client.get("/api/stocks/TCS")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["symbol"], "TCS")
+
+    @patch("app.get_bulk_block_short_data", return_value=({"bulk": pd.DataFrame(), "block": pd.DataFrame()}, False))
+    @patch("app.get_cached_swr")
+    def test_fii_dii_insights_api_uses_cached_history(self, cached, deal_data):
+        cached.side_effect = [
+            ([{"category": "FII/FPI", "date": "17-Jul-2026", "net": -10}], False),
+            ([{"date": "2026-07-16", "fii": 20, "dii": 30}], False),
+        ]
+        response = self.client.get("/api/fii-dii-insights")
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["history"][-1]["date"], "2026-07-17")
+        self.assertIn("institutional_deals", payload)
 
     @patch("app.build_stock_page_context")
     def test_stock_analysis_page_handles_unavailable_benchmark(self, context_builder):

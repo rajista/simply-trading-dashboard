@@ -281,8 +281,8 @@
         </div>
     </article>
 
-    <article class="fii-dii-panel panel">
-        <h2>FII / DII Cash Activity {% if fii_dii_stale %}<small>cached</small>{% endif %}</h2>
+    <article class="fii-dii-panel panel" data-fii-dii-open tabindex="0" aria-label="Open detailed FII and DII trends">
+        <h2>FII / DII Cash Activity {% if fii_dii_stale %}<small>cached</small>{% endif %}<button type="button" class="panel-detail-button">View trends</button></h2>
         {% if fii_dii_summary.sessions %}<div class="flow-summary"><span>{{ fii_dii_summary.sessions }} session cumulative</span><b class="{{ 'positive' if fii_dii_summary.fii >= 0 else 'negative' }}">FII {{ format_crore_value(fii_dii_summary.fii) }}</b><b class="{{ 'positive' if fii_dii_summary.dii >= 0 else 'negative' }}">DII {{ format_crore_value(fii_dii_summary.dii) }}</b></div>{% endif %}
         <table>
             <thead><tr><th>Type</th><th>Buy</th><th>Sell</th><th>Net</th></tr></thead>
@@ -349,4 +349,22 @@
 
 <script id="ticker-hover-data" type="application/json">{{ market.hover_data|tojson }}</script>
 {% include "_stock_popup.html" %}
+<div id="fii-dii-dialog" class="institution-flow-modal" hidden>
+    <div class="institution-flow-backdrop" data-fii-dii-close></div>
+    <section role="dialog" aria-modal="true" aria-labelledby="institution-flow-title">
+        <header>
+            <div>
+                <small>Institutional money tracker</small>
+                <h2 id="institution-flow-title">FII / DII Cash Flow &amp; Disclosed Deals</h2>
+            </div>
+            <button type="button" data-fii-dii-close aria-label="Close FII and DII trends">&times;</button>
+        </header>
+        <div class="institution-flow-body" data-fii-dii-content>
+            <div class="institution-flow-loading">
+                <strong>Preparing institutional trends</strong>
+                <span>Loading cached cash flows and disclosed transactions...</span>
+            </div>
+        </div>
+    </section>
+</div>
 {% endblock %}

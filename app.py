@@ -46,6 +46,7 @@ NSE_NIFTY_500_API = (
 )
 NSE_ALL_INDICES_API = "https://www.nseindia.com/api/allIndices"
 NSE_FII_DII_API = "https://www.nseindia.com/api/fiidiiTradeReact"
+FII_DII_HISTORY_ARCHIVE_URL = "https://fii-diidata.mrchartist.com/api/history-full"
 NSE_BULK_BLOCK_REPORT_URL = "https://www.nseindia.com/report-detail/display-bulk-and-block-deals"
 NSE_BULK_BLOCK_HISTORY_API = "https://www.nseindia.com/api/historicalOR/bulk-block-short-deals"
 NSE_HISTORICAL_DEAL_APIS = {
@@ -255,6 +256,7 @@ NEWS_CACHE_TTL = 900
 CALENDAR_CACHE_TTL = 21600
 CONSTITUENT_CACHE_TTL = 86400
 BULK_BLOCK_CACHE_TTL = 24 * 60 * 60
+FII_DII_HISTORY_CACHE_TTL = 6 * 60 * 60
 STOCK_DETAIL_CACHE_TTL = 24 * 60 * 60
 STOCK_AI_CACHE_TTL = 12 * 60 * 60
 INSIGHTS_SNAPSHOT_TTL = 7 * 24 * 60 * 60
@@ -670,6 +672,55 @@ def normalize_fii_dii_activity(payload):
     if not rows:
         raise ValueError("NSE FII/DII response has no usable rows")
     return rows
+
+
+def _flow_date_iso(value):
+    text = str(value or "").strip()
+    parsed = pd.to_datetime(
+        text,
+        errors="coerce",
+        format="%Y-%m-%d" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else "%d-%b-%Y",
+    )
+    if pd.isna(parsed):
+        return None
+    return parsed.date().isoformat()
+
+
+def normalize_fii_dii_history(payload):
+    """Normalize compact historical cash-flow rows without trusting missing fields."""
+    if not isinstance(payload, list):
+        raise ValueError("FII/DII history response has no rows")
+    rows = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        flow_date = _flow_date_iso(item.get("d") or item.get("date"))
+        if not flow_date:
+            continue
+        rows.append(
+            {
+                "date": flow_date,
+                "fii": _first_number(item.get("fn"), item.get("fii_net")),
+                "dii": _first_number(item.get("dn"), item.get("dii_net")),
+                "fii_buy": _first_number(item.get("fb"), item.get("fii_buy")),
+                "fii_sell": _first_number(item.get("fs"), item.get("fii_sell")),
+                "dii_buy": _first_number(item.get("db"), item.get("dii_buy")),
+                "dii_sell": _first_number(item.get("ds"), item.get("dii_sell")),
+            }
+        )
+    if not rows:
+        raise ValueError("FII/DII history response has no usable rows")
+    return sorted(rows, key=lambda row: row["date"])
+
+
+def fetch_fii_dii_history_archive():
+    response = requests.get(
+        FII_DII_HISTORY_ARCHIVE_URL,
+        timeout=15,
+        headers={"User-Agent": "Mozilla/5.0 SimplyTrading/1.0", "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    return normalize_fii_dii_history(response.json())
 
 
 def get_stock_universe():
@@ -3357,13 +3408,15 @@ def record_fii_dii_history(rows):
     if not cached:
         cached = _read_persistent_cache(FII_DII_HISTORY_KEY)
     history = list(cached.get("data") or []) if isinstance(cached, dict) else []
-    by_date = {
-        item.get("date"): item
-        for item in history
-        if isinstance(item, dict) and item.get("date")
-    }
+    by_date = {}
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        flow_date = _flow_date_iso(item.get("date"))
+        if flow_date:
+            by_date[flow_date] = {**item, "date": flow_date}
     for row in rows:
-        flow_date = row.get("date")
+        flow_date = _flow_date_iso(row.get("date"))
         if not flow_date:
             continue
         entry = by_date.setdefault(flow_date, {"date": flow_date, "fii": None, "dii": None})
@@ -3372,7 +3425,7 @@ def record_fii_dii_history(rows):
             entry["fii"] = row.get("net")
         elif category.startswith("DII"):
             entry["dii"] = row.get("net")
-    history = list(by_date.values())[-10:]
+    history = sorted(by_date.values(), key=lambda item: item["date"])[-520:]
     with _CACHE_LOCK:
         _CACHE[FII_DII_HISTORY_KEY] = {
             "data": history,
@@ -3380,6 +3433,179 @@ def record_fii_dii_history(rows):
         }
     _write_persistent_cache(FII_DII_HISTORY_KEY, history, INSIGHTS_SNAPSHOT_TTL)
     return history
+
+
+def merge_fii_dii_history(*histories):
+    by_date = {}
+    for history in histories:
+        for item in history or []:
+            if not isinstance(item, dict):
+                continue
+            flow_date = _flow_date_iso(item.get("date"))
+            if not flow_date:
+                continue
+            existing = by_date.setdefault(flow_date, {"date": flow_date})
+            for key in ("fii", "dii", "fii_buy", "fii_sell", "dii_buy", "dii_sell"):
+                value = _parse_number(item.get(key))
+                if value is not None:
+                    existing[key] = value
+    return sorted(by_date.values(), key=lambda item: item["date"])[-520:]
+
+
+_DII_CLIENT_TERMS = (
+    "MUTUAL FUND",
+    "LIFE INSURANCE",
+    "GENERAL INSURANCE",
+    "NATIONAL PENSION SYSTEM",
+    "NPS TRUST",
+)
+_FII_CLIENT_TERMS = (
+    "MAURITIUS",
+    " PTE",
+    " VCC",
+    " PCC",
+    " SICAV",
+    " UCITS",
+    "FUND LP",
+    "INTERNATIONAL STOCK",
+    "EMERGING MARKETS",
+    "EMERGING MARKET",
+    "NORGES BANK",
+    "ABU DHABI INVESTMENT AUTHORITY",
+    "VANGUARD",
+    "FIDELITY",
+    "T ROWE PRICE",
+    "T. ROWE PRICE",
+    "GOVERNMENT PENSION INVESTMENT",
+    "PUBLIC SECTOR PENSION INVESTMENT",
+    "WF ASIAN",
+)
+
+
+def classify_institutional_client(client_name):
+    """Classify only explicit institutional names; ambiguous clients stay excluded."""
+    name = re.sub(r"\s+", " ", str(client_name or "").upper()).strip()
+    if not name:
+        return None
+    if any(term in name for term in _DII_CLIENT_TERMS):
+        return "DII"
+    if any(term in name for term in _FII_CLIENT_TERMS):
+        return "FII/FPI"
+    return None
+
+
+def _institutional_deal_leaders(frame, category, side, limit=6):
+    selected = frame[(frame["institution"] == category) & (frame["side"] == side)]
+    if selected.empty:
+        return []
+    leaders = []
+    for symbol, group in selected.groupby("symbol"):
+        security_names = [name for name in group["security_name"].astype(str) if name.strip()]
+        leaders.append(
+            {
+                "symbol": symbol,
+                "name": security_names[0] if security_names else symbol,
+                "value_crore": round(float(group["value"].sum()) / 10_000_000, 2),
+                "quantity": int(group["quantity"].sum()),
+                "deals": int(len(group)),
+            }
+        )
+    return sorted(leaders, key=lambda row: row["value_crore"], reverse=True)[:limit]
+
+
+def build_institutional_deal_trends(deal_data):
+    frames = []
+    for kind in ("bulk", "block"):
+        frame = deal_data.get(kind) if isinstance(deal_data, dict) else None
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            continue
+        usable = frame.copy()
+        usable["deal_type"] = kind
+        frames.append(usable)
+    if not frames:
+        return {"latest_date": None, "classified_deals": 0, "periods": {}}
+    combined = pd.concat(frames, ignore_index=True)
+    combined["institution"] = combined["client_name"].map(classify_institutional_client)
+    combined = combined[combined["institution"].notna()].copy()
+    if combined.empty:
+        return {"latest_date": None, "classified_deals": 0, "periods": {}}
+    combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
+    combined = combined.dropna(subset=["date"])
+    end_date = combined["date"].max().normalize()
+    definitions = (("latest", "Latest session", 0), ("1m", "Last 1 month", 30), ("6m", "Last 6 months", 183))
+    periods = {}
+    for key, label, days in definitions:
+        period_frame = (
+            combined[combined["date"].eq(end_date)]
+            if days == 0
+            else combined[combined["date"].ge(end_date - pd.Timedelta(days=days))]
+        )
+        categories = {}
+        for category in ("FII/FPI", "DII"):
+            categories[category] = {
+                "buy": _institutional_deal_leaders(period_frame, category, "BUY"),
+                "sell": _institutional_deal_leaders(period_frame, category, "SELL"),
+            }
+        periods[key] = {"label": label, "categories": categories}
+    return {
+        "latest_date": end_date.date().isoformat(),
+        "classified_deals": int(len(combined)),
+        "periods": periods,
+    }
+
+
+def build_fii_dii_flow_insights(history, deal_data=None):
+    history = merge_fii_dii_history(history)
+    if not history:
+        return {
+            "status": "warming",
+            "history": [],
+            "periods": [],
+            "institutional_deals": build_institutional_deal_trends(deal_data or {}),
+        }
+    end_date = date.fromisoformat(history[-1]["date"])
+    start_date = date.fromisoformat(history[0]["date"])
+    recent = history[-7:]
+    largest = max(
+        [abs(float(row.get(key) or 0)) for row in recent for key in ("fii", "dii")] or [1]
+    ) or 1
+    chart_rows = [
+        {
+            **row,
+            "date_label": date.fromisoformat(row["date"]).strftime("%d %b"),
+            "fii_width": round(abs(float(row.get("fii") or 0)) / largest * 100, 1),
+            "dii_width": round(abs(float(row.get("dii") or 0)) / largest * 100, 1),
+        }
+        for row in recent
+    ]
+    period_definitions = (("1m", "1 month", 30), ("6m", "6 months", 183), ("1y", "1 year", 365), ("2y", "2 years", 730))
+    periods = []
+    for key, label, days in period_definitions:
+        cutoff = end_date - timedelta(days=days)
+        selected = [row for row in history if date.fromisoformat(row["date"]) >= cutoff]
+        complete = start_date <= cutoff + timedelta(days=7)
+        periods.append(
+            {
+                "key": key,
+                "label": label,
+                "fii": round(sum(float(row.get("fii") or 0) for row in selected), 2),
+                "dii": round(sum(float(row.get("dii") or 0) for row in selected), 2),
+                "sessions": len(selected),
+                "complete": complete,
+                "coverage": f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}",
+            }
+        )
+    return {
+        "status": "ready",
+        "as_of": end_date.isoformat(),
+        "history": chart_rows,
+        "periods": periods,
+        "institutional_deals": build_institutional_deal_trends(deal_data or {}),
+        "source_note": (
+            "Aggregate flows use NSE daily cash-market values with a cached historical archive. "
+            "Stock leaders use disclosed NSE bulk/block transactions and explicit institution-name matching."
+        ),
+    }
 
 
 def build_breadth_divergence(rows, nifty_rows):
@@ -4189,6 +4415,35 @@ def stock_details_snapshot_api():
         }
     )
     response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=86400"
+    response.add_etag()
+    return response.make_conditional(request)
+
+
+@app.route("/api/fii-dii-insights")
+def fii_dii_insights_api():
+    current, current_stale = get_cached_swr(
+        "fii_dii",
+        MARKET_CACHE_TTL,
+        fetch_fii_dii_activity,
+    )
+    stored_history = record_fii_dii_history(current or [])
+    archive, archive_stale = get_cached_swr(
+        "fii_dii_history_archive",
+        FII_DII_HISTORY_CACHE_TTL,
+        fetch_fii_dii_history_archive,
+    )
+    deal_data, deal_stale = get_bulk_block_short_data()
+    history = merge_fii_dii_history(archive or [], stored_history)
+    payload = build_fii_dii_flow_insights(history, deal_data or {})
+    payload.update(
+        {
+            "stale": bool(current_stale or archive_stale or deal_stale),
+            "aggregate_source": "NSE cash-market activity; historical values cached from a public NSE-data archive",
+            "deal_source": (deal_data or {}).get("source", "unavailable"),
+        }
+    )
+    response = jsonify(_json_safe(payload))
+    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=21600"
     response.add_etag()
     return response.make_conditional(request)
 

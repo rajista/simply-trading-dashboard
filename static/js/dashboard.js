@@ -37,6 +37,8 @@
     let pinned = false;
     let lastTrigger = null;
     let dragStartY = null;
+    let dragStartHeight = null;
+    let suppressOpenUntil = 0;
     const detailRequests = new Map();
 
     const signed = (value, digits = 2) => {
@@ -269,6 +271,7 @@
     };
 
     const show = (target, keepOpen = false) => {
+        if (Date.now() < suppressOpenUntil) return;
         const item = tickerData[target.dataset.symbol];
         if (!item) return;
         window.clearTimeout(hideTimer);
@@ -277,6 +280,9 @@
         activateTab("overview");
         render(target, item);
         card.classList.add("is-visible");
+        card.classList.remove("is-sheet-expanded");
+        card.style.height = "";
+        card.style.transform = "";
         card.setAttribute("aria-hidden", "false");
         if (popupBody) popupBody.scrollTop = 0;
         document.body.classList.toggle("stock-popup-open", isTapLayout());
@@ -287,16 +293,40 @@
         hydrateDetail(item, target);
     };
 
+    const closePopup = () => {
+        window.clearTimeout(hideTimer);
+        suppressOpenUntil = Date.now() + 350;
+        pinned = false;
+        dragStartY = null;
+        dragStartHeight = null;
+        card.classList.remove("is-visible", "is-sheet-expanded");
+        card.setAttribute("aria-hidden", "true");
+        card.style.height = "";
+        card.style.transform = "";
+        document.body.classList.remove("stock-popup-open");
+        if (card.contains(document.activeElement)) document.activeElement.blur();
+        lastTrigger = null;
+    };
+
     const hide = (force = false) => {
+        if (force) {
+            closePopup();
+            return;
+        }
         if (pinned && !force) return;
         hideTimer = window.setTimeout(() => {
             pinned = false;
             card.classList.remove("is-visible");
             card.setAttribute("aria-hidden", "true");
             document.body.classList.remove("stock-popup-open");
-            if (force && isTapLayout()) lastTrigger?.focus?.({preventScroll: true});
-        }, force ? 0 : 140);
+        }, 140);
     };
+
+    closeButton?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closePopup();
+    });
 
     if (!isTapLayout()) {
         document.addEventListener("pointerover", (event) => {
@@ -400,18 +430,171 @@
 
     const dragHandle = card.querySelector("[data-popup-drag-handle]");
     dragHandle?.addEventListener("touchstart", (event) => {
+        if (!isTapLayout() || event.target.closest("button, a")) return;
         dragStartY = event.touches[0]?.clientY ?? null;
+        dragStartHeight = card.offsetHeight;
     }, {passive: true});
     dragHandle?.addEventListener("touchmove", (event) => {
         if (dragStartY === null) return;
         const delta = (event.touches[0]?.clientY ?? dragStartY) - dragStartY;
-        if (delta > 0) card.style.transform = `translateY(${Math.min(delta, 120)}px)`;
-    }, {passive: true});
+        if (delta < 0) {
+            const maximum = window.innerHeight - 8;
+            card.style.height = `${Math.min(maximum, (dragStartHeight || card.offsetHeight) + Math.abs(delta))}px`;
+        } else {
+            card.style.transform = `translateY(${Math.min(delta, 140)}px)`;
+        }
+        event.preventDefault();
+    }, {passive: false});
     dragHandle?.addEventListener("touchend", (event) => {
         const endY = event.changedTouches[0]?.clientY ?? dragStartY;
         const delta = dragStartY === null ? 0 : endY - dragStartY;
         card.style.transform = "";
+        card.style.height = "";
         dragStartY = null;
-        if (delta > 85) hide(true);
+        dragStartHeight = null;
+        if (delta > 85) closePopup();
+        else if (delta < -40) card.classList.add("is-sheet-expanded");
     }, {passive: true});
+})();
+
+(() => {
+    const dialog = document.getElementById("fii-dii-dialog");
+    const content = dialog?.querySelector("[data-fii-dii-content]");
+    const triggers = document.querySelectorAll("[data-fii-dii-open]");
+    if (!dialog || !content || !triggers.length) return;
+
+    let dataPromise = null;
+    let previouslyFocused = null;
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+    })[character]);
+    const crore = (value) => {
+        if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+        const number = Number(value);
+        return `${number >= 0 ? "+" : "-"}₹${Math.abs(number).toLocaleString("en-IN", {maximumFractionDigits: 0})} Cr`;
+    };
+    const tone = (value) => Number(value || 0) >= 0 ? "positive" : "negative";
+
+    const stockList = (items) => {
+        if (!Array.isArray(items) || !items.length) return '<li><span class="unavailable">No classified deals</span></li>';
+        return items.map((item) => `
+            <li>
+                <a href="/stock/${encodeURIComponent(item.symbol)}" title="${escapeHtml(item.name)}">${escapeHtml(item.symbol)}</a>
+                <b>₹${Number(item.value_crore || 0).toLocaleString("en-IN", {maximumFractionDigits: 1})} Cr</b>
+            </li>
+        `).join("");
+    };
+
+    const categoryBlock = (name, data) => `
+        <section class="institution-category">
+            <h4>${escapeHtml(name)}</h4>
+            <div class="institution-side-grid">
+                <div class="buy"><h5>Top disclosed buys</h5><ul class="institution-stock-list">${stockList(data?.buy)}</ul></div>
+                <div class="sell"><h5>Top disclosed sells</h5><ul class="institution-stock-list">${stockList(data?.sell)}</ul></div>
+            </div>
+        </section>
+    `;
+
+    const render = (payload) => {
+        if (!payload || payload.status !== "ready") {
+            content.innerHTML = '<div class="institution-flow-loading"><strong>Institutional history is warming</strong><span>Please reopen this panel shortly.</span></div>';
+            return;
+        }
+        const periodCards = (payload.periods || []).map((period) => `
+            <article class="flow-period-card">
+                <strong>${escapeHtml(period.label)}</strong>
+                <span>FII net</span><b class="${tone(period.fii)}">${crore(period.fii)}</b>
+                <span>DII net</span><b class="${tone(period.dii)}">${crore(period.dii)}</b>
+                <small class="${period.complete ? "" : "partial"}">${period.sessions} sessions · ${period.complete ? "complete window" : `partial coverage: ${escapeHtml(period.coverage)}`}</small>
+            </article>
+        `).join("");
+        const chartRows = (payload.history || []).map((row) => `
+            <div class="flow-day-row">
+                <time>${escapeHtml(row.date_label)}</time>
+                <div class="flow-day-bars" title="FII ${crore(row.fii)}; DII ${crore(row.dii)}">
+                    <i class="fii" style="width:${Math.max(1.5, Number(row.fii_width || 0))}%"></i>
+                    <i class="dii" style="width:${Math.max(1.5, Number(row.dii_width || 0))}%"></i>
+                </div>
+                <b class="${tone(row.fii)}">${crore(row.fii)}</b>
+                <b class="${tone(row.dii)}">${crore(row.dii)}</b>
+            </div>
+        `).join("");
+        const deals = payload.institutional_deals || {};
+        const periodEntries = ["latest", "1m", "6m"]
+            .filter((key) => deals.periods?.[key])
+            .map((key) => [key, deals.periods[key]]);
+        const dealTabs = periodEntries.map(([key, period], index) => `
+            <button type="button" class="${index === 0 ? "is-active" : ""}" data-institution-period="${escapeHtml(key)}">${escapeHtml(period.label)}</button>
+        `).join("");
+        const dealPanels = periodEntries.map(([key, period], index) => `
+            <div class="institution-deal-period" data-institution-panel="${escapeHtml(key)}" ${index === 0 ? "" : "hidden"}>
+                <div class="institution-deal-grid">
+                    ${categoryBlock("FII / FPI", period.categories?.["FII/FPI"])}
+                    ${categoryBlock("DII", period.categories?.DII)}
+                </div>
+            </div>
+        `).join("");
+        content.innerHTML = `
+            <div class="flow-period-grid">${periodCards}</div>
+            <section class="flow-chart-panel">
+                <h3>Past 7 trading sessions · net cash activity</h3>
+                <div class="flow-chart-legend"><span><i class="fii"></i>FII / FPI</span><span><i class="dii"></i>DII</span></div>
+                ${chartRows || '<div class="unavailable">No recent sessions available</div>'}
+            </section>
+            <section class="institution-deal-panel">
+                <h3>Stocks institutions bought and sold most · disclosed bulk/block deals</h3>
+                <div class="institution-deal-tabs">${dealTabs}</div>
+                ${dealPanels || '<div class="unavailable">No explicitly classified institutional deals available</div>'}
+                <p class="institution-flow-note">Latest disclosed deal date: ${escapeHtml(deals.latest_date || "unavailable")}. ${escapeHtml(payload.source_note || "")} Ambiguous client names are excluded, so these lists are not a complete record of all institutional trading.</p>
+            </section>
+        `;
+    };
+
+    const load = () => {
+        if (!dataPromise) {
+            dataPromise = fetch("/api/fii-dii-insights", {headers: {"Accept": "application/json"}})
+                .then((response) => response.ok ? response.json() : Promise.reject(new Error("Unavailable")))
+                .then((payload) => { render(payload); return payload; })
+                .catch(() => {
+                    dataPromise = null;
+                    content.innerHTML = '<div class="institution-flow-loading"><strong>Institutional data is temporarily unavailable</strong><span>The last cached view could not be loaded. Please try again shortly.</span></div>';
+                });
+        }
+        return dataPromise;
+    };
+    const open = () => {
+        previouslyFocused = document.activeElement;
+        dialog.hidden = false;
+        document.body.classList.add("stock-popup-open");
+        dialog.querySelector("button[data-fii-dii-close]")?.focus({preventScroll: true});
+        load();
+    };
+    const close = () => {
+        dialog.hidden = true;
+        document.body.classList.remove("stock-popup-open");
+        previouslyFocused?.focus?.({preventScroll: true});
+    };
+
+    triggers.forEach((trigger) => {
+        trigger.addEventListener("click", open);
+        trigger.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                open();
+            }
+        });
+    });
+    dialog.addEventListener("click", (event) => {
+        const closer = event.target.closest("[data-fii-dii-close]");
+        if (closer) { close(); return; }
+        const periodButton = event.target.closest("[data-institution-period]");
+        if (!periodButton) return;
+        dialog.querySelectorAll("[data-institution-period]").forEach((button) => button.classList.toggle("is-active", button === periodButton));
+        dialog.querySelectorAll("[data-institution-panel]").forEach((panel) => { panel.hidden = panel.dataset.institutionPanel !== periodButton.dataset.institutionPeriod; });
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !dialog.hidden) close();
+    });
+    if ("requestIdleCallback" in window) window.requestIdleCallback(load, {timeout: 3500});
+    else window.setTimeout(load, 1200);
 })();

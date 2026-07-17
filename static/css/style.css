@@ -845,7 +845,10 @@ body.heatmap-expanded { overflow: hidden; }
     box-shadow: 0 12px 35px rgba(0, 0, 0, .48);
     pointer-events: auto;
 }
-.ticker-hover-card.is-visible { display: block; }
+.ticker-hover-card.is-visible {
+    display: grid;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+}
 .ticker-hover-card.is-mobile-popup {
     right: 8px;
     bottom: 8px;
@@ -855,8 +858,7 @@ body.heatmap-expanded { overflow: hidden; }
     max-height: min(88dvh, 720px);
 }
 .ticker-hover-card header {
-    position: sticky;
-    top: 0;
+    position: relative;
     z-index: 2;
     display: flex;
     align-items: baseline;
@@ -864,12 +866,16 @@ body.heatmap-expanded { overflow: hidden; }
     gap: 12px;
     padding: 9px 12px 6px;
     background: #303644;
+    touch-action: none;
 }
+.popup-drag-grip { display: none; }
 .ticker-hover-card header div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .ticker-hover-card header strong { font: 700 21px Georgia, serif; }
 .ticker-hover-card header span { overflow: hidden; color: #9ba3b5; text-overflow: ellipsis; white-space: nowrap; }
 .ticker-hover-card header b { white-space: nowrap; }
 .ticker-hover-close {
+    position: relative;
+    z-index: 4;
     flex: 0 0 auto;
     width: 22px;
     height: 22px;
@@ -881,6 +887,7 @@ body.heatmap-expanded { overflow: hidden; }
     cursor: pointer;
 }
 .ticker-hover-body {
+    min-height: 0;
     max-height: calc(100vh - 92px);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -1069,7 +1076,7 @@ body.heatmap-expanded { overflow: hidden; }
     color: #b9c6d8;
     font-size: 9px;
 }
-.stock-popup-open { overflow: hidden !important; touch-action: none; }
+.stock-popup-open { overflow: hidden !important; }
 .stock-news-box {
     display: grid;
     gap: 5px;
@@ -1273,7 +1280,29 @@ body.heatmap-expanded { overflow: hidden; }
 .internal-grid strong { font-size: 13px; }
 .events-panel, .earnings-panel, .market-stats, .fii-dii-panel { padding: 8px 10px; }
 .events-panel h2 small { color: #f6c85f; }
+.fii-dii-panel {
+    cursor: pointer;
+    transition: border-color .16s ease, background .16s ease;
+}
+.fii-dii-panel:hover, .fii-dii-panel:focus-visible {
+    border-color: #4a69a5;
+    background: linear-gradient(135deg, rgba(41, 98, 255, .08), var(--panel));
+    outline: none;
+}
+.fii-dii-panel h2 { display: flex; align-items: center; gap: 6px; }
 .fii-dii-panel h2 small { color: #f6c85f; }
+.panel-detail-button {
+    margin-left: auto;
+    padding: 3px 7px;
+    border: 1px solid rgba(74, 168, 255, .55);
+    border-radius: 3px;
+    background: rgba(41, 98, 255, .16);
+    color: #8dc6ff;
+    font: inherit;
+    font-size: 9px;
+    font-weight: 700;
+    cursor: pointer;
+}
 .fii-dii-panel table { table-layout: fixed; }
 .fii-dii-panel td:first-child {
     display: grid;
@@ -1291,6 +1320,119 @@ body.heatmap-expanded { overflow: hidden; }
     background: #181e29;
 }
 .flow-summary span { color: var(--muted); }
+.institution-flow-modal[hidden] { display: none; }
+.institution-flow-modal {
+    position: fixed;
+    z-index: 2200;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+}
+.institution-flow-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(3, 6, 12, .78);
+    backdrop-filter: blur(3px);
+}
+.institution-flow-modal > section {
+    position: relative;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(1040px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    overflow: hidden;
+    border: 1px solid #4b556c;
+    border-radius: 7px;
+    background: #151b26;
+    box-shadow: 0 22px 65px rgba(0, 0, 0, .62);
+}
+.institution-flow-modal > section > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 14px;
+    border-bottom: 1px solid #303847;
+    background: linear-gradient(90deg, #252d3d, #1d2635);
+}
+.institution-flow-modal header small { color: #76b8ff; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.institution-flow-modal header h2 { margin: 2px 0 0; font-size: 17px; }
+.institution-flow-modal header button {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #5a657a;
+    border-radius: 4px;
+    background: #222a38;
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+}
+.institution-flow-body {
+    min-height: 0;
+    padding: 12px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+.institution-flow-loading { display: grid; gap: 5px; min-height: 180px; place-content: center; color: var(--muted); text-align: center; }
+.institution-flow-loading strong { color: var(--text); font-size: 15px; }
+.flow-period-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.flow-period-card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 8px;
+    padding: 8px;
+    border: 1px solid #313a4b;
+    border-radius: 5px;
+    background: #1b2230;
+}
+.flow-period-card > strong { grid-column: 1 / -1; color: #dce7fa; }
+.flow-period-card span { color: var(--muted); }
+.flow-period-card small { grid-column: 1 / -1; color: #737e91; }
+.flow-period-card small.partial { color: #f6c85f; }
+.flow-chart-panel, .institution-deal-panel {
+    margin-top: 9px;
+    padding: 10px;
+    border: 1px solid #313a4b;
+    border-radius: 5px;
+    background: #171e2a;
+}
+.flow-chart-panel h3, .institution-deal-panel h3 { margin: 0 0 8px; font-size: 12px; }
+.flow-chart-legend { display: flex; gap: 12px; margin-bottom: 7px; color: var(--muted); }
+.flow-chart-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 2px; }
+.flow-chart-legend .fii { background: #4aa8ff; }
+.flow-chart-legend .dii { background: var(--gain); }
+.flow-day-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) 90px 90px; gap: 8px; align-items: center; min-height: 29px; border-top: 1px solid rgba(255,255,255,.045); }
+.flow-day-row:first-of-type { border-top: 0; }
+.flow-day-bars { display: grid; gap: 3px; }
+.flow-day-bars i { display: block; min-width: 2px; height: 5px; border-radius: 0 3px 3px 0; }
+.flow-day-bars .fii { background: #4aa8ff; }
+.flow-day-bars .dii { background: var(--gain); }
+.flow-day-row b { text-align: right; }
+.institution-deal-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.institution-deal-tabs button {
+    padding: 5px 9px;
+    border: 1px solid #3b465a;
+    border-radius: 3px;
+    background: #202837;
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+}
+.institution-deal-tabs button.is-active { border-color: var(--link); background: rgba(41,98,255,.18); color: #dceaff; }
+.institution-deal-period[hidden] { display: none; }
+.institution-deal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.institution-category { padding: 8px; border: 1px solid #2f3848; background: #1a212d; }
+.institution-category h4 { margin: 0 0 6px; color: #b8c8df; }
+.institution-side-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.institution-side-grid h5 { margin: 0 0 4px; font-size: 9px; text-transform: uppercase; }
+.institution-side-grid .buy h5 { color: var(--gain); }
+.institution-side-grid .sell h5 { color: var(--loss); }
+.institution-stock-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.institution-stock-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; padding: 3px 4px; background: #202836; }
+.institution-stock-list a { overflow: hidden; color: var(--link); text-overflow: ellipsis; white-space: nowrap; }
+.institution-stock-list b { white-space: nowrap; }
+.institution-flow-note { margin: 9px 0 0; color: #8994a8; font-size: 9px; line-height: 1.45; }
 .event-list { display: grid; gap: 1px; }
 .event-row {
     display: grid;
@@ -2056,12 +2198,17 @@ body.heatmap-expanded { overflow: hidden; }
         bottom: 0;
         left: 0 !important;
         width: 100%;
-        max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 12px);
+        height: min(82dvh, 720px);
+        max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 8px);
         border-radius: 12px 12px 0 0;
         padding-bottom: env(safe-area-inset-bottom, 0px);
+        transition: height .18s ease, transform .12s ease;
+    }
+    .ticker-hover-card.is-mobile-popup.is-sheet-expanded {
+        height: calc(100dvh - env(safe-area-inset-top, 0px) - 8px);
     }
     .ticker-hover-body {
-        max-height: calc(100dvh - 104px - env(safe-area-inset-bottom, 0px));
+        max-height: none;
         touch-action: pan-y;
     }
     .ticker-hover-card svg { height: 105px; }
@@ -2069,6 +2216,18 @@ body.heatmap-expanded { overflow: hidden; }
     .ticker-hover-card header {
         align-items: center;
         gap: 8px;
+        padding-top: 17px;
+    }
+    .popup-drag-grip {
+        position: absolute;
+        top: 6px;
+        left: 50%;
+        display: block;
+        width: 42px;
+        height: 4px;
+        border-radius: 4px;
+        background: #687287;
+        transform: translateX(-50%);
     }
     .ticker-hover-card header b { font-size: 11px; }
     .ticker-hover-close {
@@ -2080,6 +2239,20 @@ body.heatmap-expanded { overflow: hidden; }
     .stock-popup-tabs button { min-height: 40px; }
     .ticker-hover-meta { padding: 7px 10px; }
     .ticker-hover-details { padding-right: 10px; padding-left: 10px; }
+    .institution-flow-modal { padding: 0; }
+    .institution-flow-modal > section {
+        align-self: end;
+        width: 100%;
+        max-height: calc(100dvh - env(safe-area-inset-top, 0px));
+        border-right: 0;
+        border-bottom: 0;
+        border-left: 0;
+        border-radius: 12px 12px 0 0;
+    }
+    .institution-flow-body { padding: 9px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+    .flow-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .flow-day-row { grid-template-columns: 43px minmax(80px, 1fr) 72px 72px; gap: 5px; }
+    .institution-deal-grid, .institution-side-grid { grid-template-columns: minmax(0, 1fr); }
     .sector-panel { overflow: visible !important; }
     .sector-table,
     .sector-table tbody {
