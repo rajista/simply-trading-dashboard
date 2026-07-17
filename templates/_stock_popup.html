@@ -1,0 +1,124 @@
+<aside id="ticker-hover-card" class="ticker-hover-card" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="stock-dialog-symbol">
+    <header data-popup-drag-handle>
+        <div>
+            <strong id="stock-dialog-symbol" data-hover-symbol></strong>
+            <span data-hover-sector></span>
+        </div>
+        <b data-hover-change></b>
+        <button type="button" class="ticker-hover-close" data-hover-close aria-label="Close stock details">&times;</button>
+    </header>
+    <nav class="stock-popup-tabs" role="tablist" aria-label="Stock details">
+        <button type="button" class="is-active" role="tab" aria-selected="true" data-popup-tab="overview">Overview</button>
+        <button type="button" role="tab" aria-selected="false" data-popup-tab="financials">Financials</button>
+        <button type="button" role="tab" aria-selected="false" data-popup-tab="ownership">Ownership</button>
+        <button type="button" role="tab" aria-selected="false" data-popup-tab="news">News</button>
+    </nav>
+    <div class="stock-popup-action">
+        <a href="#" data-hover-analysis-link>Analyse Stock <span>Performance, peers, fundamentals and AI review</span></a>
+    </div>
+    <div class="ticker-hover-body">
+        <section class="stock-popup-panel is-active" data-popup-panel="overview">
+            <svg viewBox="0 0 420 150" preserveAspectRatio="none" aria-label="Recent price trend">
+                <g class="hover-grid"><line x1="0" y1="30" x2="420" y2="30"/><line x1="0" y1="75" x2="420" y2="75"/><line x1="0" y1="120" x2="420" y2="120"/></g>
+                <polyline data-hover-chart points=""></polyline>
+            </svg>
+            <div class="ticker-hover-meta">
+                <strong data-hover-name></strong>
+                <span data-hover-price></span>
+                <span data-hover-volume></span>
+                <span data-hover-signal></span>
+                <span data-hover-five-day></span>
+            </div>
+            <div class="ticker-hover-details">
+                <div class="market-context-grid">
+                    <span>Turnover <b data-hover-turnover>-</b></span>
+                    <span>Relative volume <b data-hover-relative-volume>-</b></span>
+                    <span>Sector rank <b data-hover-sector-rank>-</b></span>
+                    <span>Vs sector <b data-hover-sector-relative>-</b></span>
+                    <span>30D <b data-hover-month-change>-</b></span>
+                    <span>1Y <b data-hover-year-change>-</b></span>
+                </div>
+                <div class="next-event-box" data-hover-event hidden>
+                    <small>Next tracked event</small>
+                    <strong data-hover-event-title></strong>
+                    <span data-hover-event-date></span>
+                </div>
+                <div class="accumulation-box">
+                    <span>Accumulation <b data-hover-accumulation-score>-</b></span>
+                    <i data-hover-obv>OBV</i>
+                    <i data-hover-pullback>Pullback</i>
+                    <i data-hover-volume-range>Range</i>
+                </div>
+                <div class="range-grid">
+                    <span>Open <b data-hover-day-open>-</b></span>
+                    <span>High <b data-hover-day-high>-</b></span>
+                    <span>Low <b data-hover-day-low>-</b></span>
+                    <span>52W High Dist. <b data-hover-distance-high>-</b></span>
+                    <span>52W Low Dist. <b data-hover-distance-low>-</b></span>
+                    <span>Market Cap / FFMC <b data-hover-market-cap>-</b></span>
+                </div>
+                <div class="headline-context-box" data-hover-headline-context hidden>
+                    <strong>News context</strong>
+                    <p data-hover-selected-headline></p>
+                    <div data-hover-context-metrics></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="stock-popup-panel" data-popup-panel="financials">
+            <div class="ticker-hover-details popup-section-pad">
+                <div class="growth-grid">
+                    <span>1M <b data-hover-growth-1m>-</b></span>
+                    <span>3M <b data-hover-growth-3m>-</b></span>
+                    <span>1Y <b data-hover-growth-1y>-</b></span>
+                    <span>5Y <b data-hover-growth-5y>-</b></span>
+                </div>
+                <div class="fund-grid">
+                    <span>P/E <b data-hover-pe>-</b></span>
+                    <span>Revenue <b data-hover-revenue>-</b></span>
+                    <span>PAT Margin <b data-hover-pat>-</b></span>
+                    <span>Operating Margin <b data-hover-opm>-</b></span>
+                    <span>Total Debt <b data-hover-total-debt>-</b></span>
+                    <span>Debt/Equity <b data-hover-debt-equity>-</b></span>
+                </div>
+                <div class="advanced-grid">
+                    <span>ROE <b data-hover-roe>-</b></span>
+                    <span>ROCE <b data-hover-roce>-</b></span>
+                    <span>P/B <b data-hover-pb>-</b></span>
+                    <span>3Y Profit CAGR <b data-hover-profit-cagr>-</b></span>
+                    <span>3Y Avg P/E <b data-hover-avg-pe>-</b></span>
+                    <span>Dividend Yield <b data-hover-dividend-yield>-</b></span>
+                    <span>Delivery <b data-hover-delivery>-</b></span>
+                </div>
+                <p data-hover-description>Company details are loaded from the daily popup cache.</p>
+            </div>
+        </section>
+
+        <section class="stock-popup-panel" data-popup-panel="ownership">
+            <div class="ticker-hover-details popup-section-pad">
+                <strong class="ownership-title">Shareholding / latest available change</strong>
+                <div class="ownership-grid">
+                    <span class="owner-promoter">Promoter / Chg <b data-hover-promoter>-</b></span>
+                    <span class="owner-fii">FII / Chg <b data-hover-fii>-</b></span>
+                    <span class="owner-dii">DII / Chg <b data-hover-dii>-</b></span>
+                    <span class="owner-retail">Retail / Chg <b data-hover-retail>-</b></span>
+                    <span class="owner-total">Institutions / Chg <b data-hover-fii-dii>-</b></span>
+                </div>
+                <p class="popup-disclaimer">Holdings are shown from the latest available public snapshot. A dash means the source did not provide that category.</p>
+            </div>
+        </section>
+
+        <section class="stock-popup-panel" data-popup-panel="news">
+            <div class="ticker-hover-details popup-section-pad">
+                <div class="stock-news-box">
+                    <strong>Latest News</strong>
+                    <ul data-hover-news></ul>
+                </div>
+                <div class="stock-news-box related-market-news">
+                    <strong>Related market headlines</strong>
+                    <ul data-hover-market-news></ul>
+                </div>
+            </div>
+        </section>
+    </div>
+</aside>

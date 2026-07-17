@@ -6,12 +6,14 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 import hashlib
 from io import StringIO
+import json
 import math
 import numbers
 import os
 from pathlib import Path
 import pickle
 import re
+from statistics import median
 import sys
 import threading
 import time as time_module
@@ -42,6 +44,7 @@ NSE_NIFTY_500_API = (
     "https://www.nseindia.com/api/"
     "equity-stock-indices?index=NIFTY%20500"
 )
+NSE_ALL_INDICES_API = "https://www.nseindia.com/api/allIndices"
 NSE_FII_DII_API = "https://www.nseindia.com/api/fiidiiTradeReact"
 NSE_BULK_BLOCK_REPORT_URL = "https://www.nseindia.com/report-detail/display-bulk-and-block-deals"
 NSE_BULK_BLOCK_HISTORY_API = "https://www.nseindia.com/api/historicalOR/bulk-block-short-deals"
@@ -253,6 +256,7 @@ CALENDAR_CACHE_TTL = 21600
 CONSTITUENT_CACHE_TTL = 86400
 BULK_BLOCK_CACHE_TTL = 24 * 60 * 60
 STOCK_DETAIL_CACHE_TTL = 24 * 60 * 60
+STOCK_AI_CACHE_TTL = 12 * 60 * 60
 INSIGHTS_SNAPSHOT_TTL = 7 * 24 * 60 * 60
 CACHE_DIR = Path(os.getenv("APP_CACHE_DIR", Path(__file__).resolve().parent / ".runtime_cache"))
 PERSISTENT_CACHE_ENABLED = (
@@ -261,6 +265,8 @@ PERSISTENT_CACHE_ENABLED = (
 )
 STOCK_POPUP_DETAILS_LATEST_KEY = "stock_popup_details:latest"
 INSIGHTS_SNAPSHOT_KEY = "insights_snapshot:latest"
+MARKET_BREADTH_HISTORY_KEY = "market_breadth_history"
+FII_DII_HISTORY_KEY = "fii_dii_history"
 MAX_ASYNC_POPUP_DETAIL_PREFETCH = 75
 STOCK_DETAIL_WORKERS = int(os.getenv("STOCK_DETAIL_WORKERS", "3"))
 STARTUP_MARKET_REFRESH_DELAY = int(os.getenv("STARTUP_MARKET_REFRESH_DELAY_SECONDS", "10"))
@@ -494,6 +500,60 @@ def fetch_nse_nifty500_snapshot():
             f"NSE NIFTY 500 response has only {len(constituent_rows)} constituent rows"
         )
     return rows
+
+
+def fetch_nse_market_gauges():
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": NSE_HOME_URL,
+    }
+    with requests.Session() as session:
+        session.headers.update(headers)
+        try:
+            session.get("https://www.nseindia.com/", timeout=8)
+        except requests.RequestException:
+            pass
+        response = session.get(NSE_ALL_INDICES_API, timeout=15)
+        response.raise_for_status()
+        payload = response.json()
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        raise ValueError("NSE all-indices response has no data rows")
+    wanted = (
+        "INDIA VIX",
+        "NIFTY NEXT 50",
+        "NIFTY MIDCAP 100",
+        "NIFTY SMALLCAP 100",
+    )
+    by_name = {str(row.get("index") or "").upper(): row for row in rows}
+    gauges = []
+    for name in wanted:
+        item = by_name.get(name)
+        if not item:
+            continue
+        gauges.append(
+            {
+                "name": name,
+                "price": _parse_number(item.get("last")),
+                "change": _parse_number(item.get("variation")),
+                "percent": _parse_number(item.get("percentChange")),
+                "advances": int(_parse_number(item.get("advances")) or 0),
+                "declines": int(_parse_number(item.get("declines")) or 0),
+                "unchanged": int(_parse_number(item.get("unchanged")) or 0),
+                "month_change": _parse_number(item.get("perChange30d")),
+                "year_change": _parse_number(item.get("perChange365d")),
+                "pe": _parse_number(item.get("pe")),
+                "pb": _parse_number(item.get("pb")),
+                "dividend_yield": _parse_number(item.get("dy")),
+            }
+        )
+    return gauges
 
 
 def parse_nse_index_card(symbol, index_name, payload):
@@ -835,6 +895,13 @@ def apply_nse_quote_snapshot(rows, snapshot):
         day_open = _parse_number(item.get("open"))
         day_high = _parse_number(item.get("dayHigh"))
         day_low = _parse_number(item.get("dayLow"))
+        previous_close = _parse_number(item.get("previousClose"))
+        traded_value = _parse_number(item.get("totalTradedValue"))
+        free_float_market_cap = _parse_number(item.get("ffmc"))
+        month_change = _parse_number(item.get("perChange30d"))
+        year_change = _parse_number(item.get("perChange365d"))
+        year_high = _parse_number(item.get("yearHigh"))
+        year_low = _parse_number(item.get("yearLow"))
         delivery_percent = _parse_number(
             item.get("deliveryToTradedQuantity")
             or item.get("deliveryQuantityToTradedQuantity")
@@ -854,6 +921,22 @@ def apply_nse_quote_snapshot(rows, snapshot):
             row["day_high"] = day_high
         if day_low is not None:
             row["day_low"] = day_low
+        if previous_close is not None:
+            row["previous_close"] = previous_close
+        if traded_value is not None:
+            row["traded_value"] = traded_value
+        if free_float_market_cap is not None:
+            row["free_float_market_cap"] = free_float_market_cap
+        if month_change is not None:
+            row["month_change"] = month_change
+        if year_change is not None:
+            row["year_change"] = year_change
+        if year_high is not None:
+            row["high52"] = year_high
+        if year_low is not None:
+            row["low52"] = year_low
+        if item.get("lastUpdateTime"):
+            row["last_update_time"] = str(item.get("lastUpdateTime"))
         if delivery_percent is not None:
             row["delivery_percent"] = delivery_percent
     return rows
@@ -1043,6 +1126,61 @@ def compute_volume_range_signal(closes, volumes):
         return False
 
 
+def market_session_progress(now=None):
+    now = now or datetime.now(IST)
+    if now.weekday() >= 5:
+        return 1.0
+    session_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    session_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    if now <= session_start or now >= session_end:
+        return 1.0
+    elapsed = (now - session_start).total_seconds()
+    duration = (session_end - session_start).total_seconds()
+    return max(0.08, min(elapsed / duration, 1.0))
+
+
+def update_live_row_metrics(rows, now=None):
+    progress = market_session_progress(now)
+    for row in rows:
+        price = row.get("price")
+        volume = row.get("volume")
+        average_volume = row.get("average_volume_20d")
+        if row.get("traded_value") is None and price is not None and volume is not None:
+            row["traded_value"] = price * volume
+        expected_volume = average_volume * progress if average_volume else None
+        relative_volume = (
+            volume / expected_volume
+            if volume is not None and expected_volume and expected_volume > 0
+            else None
+        )
+        row["relative_volume"] = relative_volume
+        row["volume_change"] = (
+            (relative_volume - 1) * 100
+            if relative_volume is not None
+            else None
+        )
+        high52 = row.get("high52")
+        low52 = row.get("low52")
+        row["high52_distance"] = (
+            (price - high52) / high52 * 100
+            if price is not None and high52
+            else None
+        )
+        row["low52_distance"] = (
+            (price - low52) / low52 * 100
+            if price is not None and low52
+            else None
+        )
+        prior20_high = row.get("prior20_high")
+        row["price_volume_breakout"] = bool(
+            price is not None
+            and prior20_high
+            and price > prior20_high
+            and (relative_volume or 0) >= 1.1
+        )
+    return rows
+
+
 def build_stock_rows(quotes, history, stocks):
     rows = []
     for stock in stocks:
@@ -1072,6 +1210,7 @@ def build_stock_rows(quotes, history, stocks):
         if current_volume is None and not volumes.empty:
             current_volume = float(volumes.iloc[-1])
         previous_volume = float(volumes.iloc[-2]) if len(volumes) > 1 else None
+        average_volume_20d = float(volumes.tail(20).mean()) if len(volumes) >= 5 else None
         volume_change = (
             (current_volume - previous_volume) / previous_volume * 100
             if current_volume is not None and previous_volume
@@ -1096,6 +1235,11 @@ def build_stock_rows(quotes, history, stocks):
         quiet_pullback = compute_quiet_pullback(closes, volumes)
         volume_range_signal = compute_volume_range_signal(closes, volumes)
         accumulation_score = sum([obv_divergence, quiet_pullback, volume_range_signal])
+        prior20_high = (
+            float(closes.iloc[-21:-1].max())
+            if len(closes) >= 21
+            else float(closes.iloc[:-1].max()) if len(closes) > 1 else None
+        )
         rows.append(
             {
                 **stock,
@@ -1105,6 +1249,13 @@ def build_stock_rows(quotes, history, stocks):
                 "percent": percent,
                 "volume": current_volume,
                 "volume_change": volume_change,
+                "average_volume_20d": average_volume_20d,
+                "relative_volume": None,
+                "traded_value": (
+                    current_volume * current
+                    if current_volume is not None and current is not None
+                    else None
+                ),
                 "delivery_percent": quote.get("delivery_percent"),
                 "five_day_change": five_day_change,
                 "day_open": day_open,
@@ -1122,10 +1273,16 @@ def build_stock_rows(quotes, history, stocks):
                 ),
                 "chart_series": [
                     round(float(value), 2)
-                    for value in closes.tail(90).tolist()
+                    for value in closes.tail(60).tolist()
                     if not pd.isna(value)
                 ],
                 "market_cap": quote.get("market_cap"),
+                "free_float_market_cap": None,
+                "month_change": None,
+                "year_change": None,
+                "previous_close": previous_close,
+                "prior20_high": prior20_high,
+                "price_volume_breakout": False,
                 "sma50": sma50,
                 "sma200": sma200,
                 "high52": high52,
@@ -1152,6 +1309,31 @@ def _with_minimum_layout_weights(items, minimum_share):
             "layout_weight": max(float(item.get("raw_weight") or 0), floor),
         }
         for item in items
+    ]
+
+
+def _with_readable_impact_weights(items, impact_key, unit_key=None, readability=0.4):
+    """Blend impact with an equal/readability allocation so labels remain usable."""
+    if not items:
+        return []
+    impact_total = sum(max(float(item.get(impact_key) or 0), 0) for item in items)
+    units = [max(float(item.get(unit_key) or 0), 1) if unit_key else 1.0 for item in items]
+    unit_total = sum(units) or float(len(items))
+    if impact_total <= 0:
+        return [
+            {**item, "layout_weight": units[index] / unit_total}
+            for index, item in enumerate(items)
+        ]
+    impact_share = max(0.0, min(float(readability), 0.8))
+    return [
+        {
+            **item,
+            "layout_weight": (
+                (1 - impact_share) * max(float(item.get(impact_key) or 0), 0) / impact_total
+                + impact_share * units[index] / unit_total
+            ),
+        }
+        for index, item in enumerate(items)
     ]
 
 
@@ -1241,7 +1423,7 @@ def build_breadth(rows):
     technical200 = [row for row in rows if row["price"] is not None and row["sma200"] is not None]
     return [
         metric("Market Breadth", "Advancing", "Declining", gainers, count),
-        metric("52 Week Range", "New High", "New Low", len(high_rows), 0, len(low_rows)),
+        metric("52 Week Range", "Near High", "Near Low", len(high_rows), 0, len(low_rows)),
         metric("SMA50", "Above", "Below", sum(r["price"] > r["sma50"] for r in technical50), len(technical50)),
         metric("SMA200", "Above", "Below", sum(r["price"] > r["sma200"] for r in technical200), len(technical200)),
     ]
@@ -1251,6 +1433,7 @@ def build_sector_performance(rows):
     sectors = defaultdict(list)
     for row in rows:
         sectors[row["sector"]].append(row)
+
     def member(row):
         return {
             "display_symbol": row["display_symbol"],
@@ -1258,35 +1441,75 @@ def build_sector_performance(rows):
             "price": row.get("price"),
             "percent": row.get("percent"),
             "volume": row.get("volume"),
+            "traded_value": row.get("traded_value"),
+            "relative_volume": row.get("relative_volume"),
+            "month_change": row.get("month_change"),
+            "sector_rank": row.get("sector_rank"),
             "signal": row.get("signal"),
         }
 
-    return sorted(
-        (
+    results = []
+    for sector, values in sectors.items():
+        priced = [row for row in values if row.get("percent") is not None]
+        daily_changes = [row["percent"] for row in priced]
+        month_changes = [
+            row["month_change"]
+            for row in values
+            if row.get("month_change") is not None
+        ]
+        weighted_rows = [
+            row for row in priced
+            if row.get("free_float_market_cap")
+        ]
+        weight_total = sum(row["free_float_market_cap"] for row in weighted_rows)
+        weighted_percent = (
+            sum(row["percent"] * row["free_float_market_cap"] for row in weighted_rows)
+            / weight_total
+            if weight_total
+            else None
+        )
+        sector_average = sum(daily_changes) / len(daily_changes) if daily_changes else 0
+        ranked_values = sorted(
+            values,
+            key=lambda row: row["percent"] if row.get("percent") is not None else -math.inf,
+            reverse=True,
+        )
+        for rank, row in enumerate(ranked_values, start=1):
+            row["sector_rank"] = rank
+            row["sector_stock_count"] = len(values)
+            row["sector_average_change"] = sector_average
+            row["sector_relative_change"] = (
+                row["percent"] - sector_average
+                if row.get("percent") is not None
+                else None
+            )
+        results.append(
             {
                 "name": sector,
-                "percent": (
-                    sum(row["percent"] for row in values if row["percent"] is not None)
-                    / len([row for row in values if row["percent"] is not None])
-                    if any(row["percent"] is not None for row in values)
-                    else 0
-                ),
+                "percent": sector_average,
+                "median_percent": median(daily_changes) if daily_changes else 0,
+                "weighted_percent": weighted_percent,
+                "month_change": sum(month_changes) / len(month_changes) if month_changes else None,
                 "stocks": len(values),
-                "advancers": sum((row["percent"] or 0) > 0 for row in values),
-                "volume": sum(row["volume"] or 0 for row in values),
-                "leader": max(values, key=lambda row: row["percent"] if row["percent"] is not None else -math.inf),
-                "laggard": min(values, key=lambda row: row["percent"] if row["percent"] is not None else math.inf),
+                "advancers": sum((row.get("percent") or 0) > 0 for row in values),
+                "volume": sum(row.get("volume") or 0 for row in values),
+                "traded_value": sum(row.get("traded_value") or 0 for row in values),
+                "leader": max(
+                    values,
+                    key=lambda row: row["percent"] if row.get("percent") is not None else -math.inf,
+                ),
+                "laggard": min(
+                    values,
+                    key=lambda row: row["percent"] if row.get("percent") is not None else math.inf,
+                ),
                 "members": [
                     member(row)
-                    for row in sorted(
-                        values,
-                        key=lambda row: row["percent"] if row["percent"] is not None else -math.inf,
-                        reverse=True,
-                    )
+                    for row in ranked_values
                 ],
             }
-            for sector, values in sectors.items()
-        ),
+        )
+    return sorted(
+        results,
         key=lambda item: item["percent"],
         reverse=True,
     )
@@ -1330,6 +1553,7 @@ def build_heatmap(rows):
         sector_items.append({
             "sector": sector,
             "rows": items,
+            "stock_count": len(items),
             "impact": impact,
             "market_cap": sum(item.get("market_cap") or 0 for item in items),
             "raw_weight": impact if impact_available else fallback,
@@ -1337,7 +1561,14 @@ def build_heatmap(rows):
 
     groups = []
     sector_rectangles = _binary_treemap(
-        _with_minimum_layout_weights(sector_items, 0.035)
+        _with_readable_impact_weights(
+            sector_items,
+            "impact",
+            unit_key="stock_count",
+            readability=0.58,
+        )
+        if impact_available
+        else _with_minimum_layout_weights(sector_items, 0.055)
     )
     for sector_rectangle in sector_rectangles:
         cell_items = []
@@ -1350,9 +1581,16 @@ def build_heatmap(rows):
             })
 
         cells = []
-        for item in _binary_treemap(
-            _with_minimum_layout_weights(cell_items, 0.038)
-        ):
+        cell_layout = (
+            _with_readable_impact_weights(
+                cell_items,
+                "raw_weight",
+                readability=0.64,
+            )
+            if impact_available
+            else _with_minimum_layout_weights(cell_items, 0.055)
+        )
+        for item in _binary_treemap(cell_layout):
             percent = item["percent"] or 0
             intensity = min(abs(percent) / 5, 1)
             area = item["width"] * item["height"]
@@ -1654,6 +1892,8 @@ def _json_safe(value):
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, bool) or type(value).__name__ == "bool_":
+        return bool(value)
     try:
         if pd.isna(value):
             return None
@@ -1890,7 +2130,9 @@ def build_stock_hover_data(rows):
     return build_stock_hover_data_with_details(rows, {})
 
 
-def build_stock_hover_data_with_details(rows, details):
+def build_stock_hover_data_with_details(rows, details, headline_context=None, event_context=None):
+    headline_context = headline_context or {}
+    event_context = event_context or {}
     return {
         row["display_symbol"]: {
             "symbol": row["display_symbol"],
@@ -1901,8 +2143,16 @@ def build_stock_hover_data_with_details(rows, details):
             "percent": row.get("percent"),
             "five_day_change": row.get("five_day_change"),
             "volume": row.get("volume"),
+            "traded_value": row.get("traded_value"),
+            "relative_volume": row.get("relative_volume"),
             "market_cap": row.get("market_cap"),
+            "free_float_market_cap": row.get("free_float_market_cap"),
             "signal": row.get("signal"),
+            "month_change": row.get("month_change"),
+            "year_change": row.get("year_change"),
+            "sector_rank": row.get("sector_rank"),
+            "sector_stock_count": row.get("sector_stock_count"),
+            "sector_relative_change": row.get("sector_relative_change"),
             "series": row.get("chart_series", []),
             "day_open": row.get("day_open"),
             "day_high": row.get("day_high"),
@@ -1914,6 +2164,8 @@ def build_stock_hover_data_with_details(rows, details):
             "quiet_pullback": row.get("quiet_pullback", False),
             "volume_range_signal": row.get("volume_range_signal", False),
             "delivery_percent": row.get("delivery_percent"),
+            "market_headlines": headline_context.get(row["display_symbol"], []),
+            "next_event": event_context.get(row["display_symbol"]),
             "details": details.get(row["display_symbol"], {}),
         }
         for row in rows
@@ -1993,6 +2245,29 @@ def _fallback_stock_detail(symbol, detail=None):
         "market_cap": row.get("market_cap"),
         "volume": row.get("volume"),
         "delivery_percent": detail.get("delivery_percent", row.get("delivery_percent")),
+        "enterprise_value": None,
+        "pe_ratio": None,
+        "revenue": None,
+        "pat_margin": None,
+        "operating_profit_margin": None,
+        "roe": None,
+        "roce": None,
+        "price_to_book": None,
+        "profit_cagr_3y": None,
+        "avg_pe_3y": None,
+        "debt_equity": None,
+        "total_debt": None,
+        "promoter_holding": None,
+        "promoter_trend": None,
+        "fii_holding": None,
+        "fii_trend": None,
+        "dii_holding": None,
+        "dii_trend": None,
+        "retail_holding": None,
+        "retail_trend": None,
+        "fii_dii_holding": None,
+        "fii_dii_trend": None,
+        "dividend_yield": None,
         "description": detail.get("description") or (
             "Company fundamentals are temporarily unavailable in the popup cache. "
             "Price, volume and sector data are shown from the latest dashboard row when available."
@@ -2091,9 +2366,12 @@ def _profit_cagr_3y(financials):
     return ((latest / base) ** (1 / 3) - 1) * 100
 
 
-def _average_pe_3y(financials, info, financial_currency):
-    market_cap = _parse_number(info.get("marketCap"))
-    if not market_cap:
+def _average_pe_3y(financials, info, financial_currency, history=None):
+    shares = _parse_number(info.get("sharesOutstanding"))
+    if not shares or history is None or history.empty or "Close" not in history:
+        return None
+    closes = history["Close"].dropna()
+    if closes.empty:
         return None
     profits = _statement_series(
         financials,
@@ -2102,8 +2380,14 @@ def _average_pe_3y(financials, info, financial_currency):
     pe_values = []
     for period_end, profit in profits:
         profit_inr = _financial_to_inr(profit, financial_currency, period_end)
-        if profit_inr and profit_inr > 0:
-            pe_values.append(market_cap / profit_inr)
+        try:
+            period_timestamp = pd.Timestamp(period_end)
+            eligible_closes = closes[closes.index.tz_localize(None) <= period_timestamp.tz_localize(None)]
+        except (TypeError, ValueError):
+            eligible_closes = pd.Series(dtype=float)
+        if profit_inr and profit_inr > 0 and not eligible_closes.empty:
+            historical_market_cap = float(eligible_closes.iloc[-1]) * shares
+            pe_values.append(historical_market_cap / profit_inr)
     return sum(pe_values) / len(pe_values) if pe_values else None
 
 
@@ -2208,6 +2492,8 @@ def _build_stock_detail_from_ticker(stock, fx_warnings=None):
     return {
         "symbol": display_symbol,
         "name": company_name,
+        "market_cap": _parse_number(info.get("marketCap")),
+        "enterprise_value": _parse_number(info.get("enterpriseValue")),
         "pe_ratio": _parse_number(info.get("trailingPE")) or _parse_number(info.get("forwardPE")),
         "revenue": revenue_inr,
         "revenue_currency": "INR" if revenue_inr is not None else None,
@@ -2221,7 +2507,7 @@ def _build_stock_detail_from_ticker(stock, fx_warnings=None):
         "roce": _compute_roce(financials, balance_sheet),
         "price_to_book": _parse_number(info.get("priceToBook")),
         "profit_cagr_3y": _profit_cagr_3y(financials),
-        "avg_pe_3y": _average_pe_3y(financials, info, financial_currency),
+        "avg_pe_3y": _average_pe_3y(financials, info, financial_currency, history),
         "debt_equity": _ratio_from_percent(info.get("debtToEquity")),
         "total_debt": total_debt,
         "promoter_holding": promoter_holding,
@@ -2339,6 +2625,23 @@ def get_cached_stock_popup_details_snapshot(stocks):
         if symbol in cached_single_details and cached_single_details[symbol]:
             details[symbol] = cached_single_details[symbol]
     return details
+
+
+def get_latest_stock_popup_details_data():
+    with _CACHE_LOCK:
+        cached = _CACHE.get(STOCK_POPUP_DETAILS_LATEST_KEY)
+    if not cached:
+        cached = _read_persistent_cache(STOCK_POPUP_DETAILS_LATEST_KEY)
+        if cached:
+            with _CACHE_LOCK:
+                _CACHE[STOCK_POPUP_DETAILS_LATEST_KEY] = cached
+    data = cached.get("data") if isinstance(cached, dict) else None
+    if not isinstance(data, dict):
+        return {"details": {}, "refreshed_at": None}
+    return {
+        "details": data.get("details") or {},
+        "refreshed_at": data.get("refreshed_at"),
+    }
 
 
 def _stock_detail_universe_keys():
@@ -2722,6 +3025,16 @@ def fetch_stock_detail(display_symbol):
 
 def get_stock_detail(display_symbol):
     clean_symbol = _normalize_symbol(display_symbol)
+
+    def with_news(detail):
+        resolved = _fallback_stock_detail(clean_symbol, detail)
+        if len(resolved.get("news") or []) < 3:
+            try:
+                resolved["news"] = fetch_stock_news(clean_symbol, resolved.get("name") or clean_symbol)
+            except (requests.RequestException, ET.ParseError, ValueError, TypeError):
+                pass
+        return resolved
+
     with _CACHE_LOCK:
         popup_caches = [
             value.get("data", {}).get("details", {})
@@ -2730,17 +3043,17 @@ def get_stock_detail(display_symbol):
         ]
     for details in popup_caches:
         if clean_symbol in details and _detail_has_useful_content(details[clean_symbol]):
-            return _fallback_stock_detail(clean_symbol, details[clean_symbol])
+            return with_news(details[clean_symbol])
     latest_cache = _read_persistent_cache(STOCK_POPUP_DETAILS_LATEST_KEY)
     latest_details = latest_cache.get("data", {}).get("details", {}) if latest_cache else {}
     if clean_symbol in latest_details and _detail_has_useful_content(latest_details[clean_symbol]):
-        return _fallback_stock_detail(clean_symbol, latest_details[clean_symbol])
+        return with_news(latest_details[clean_symbol])
     data, _ = get_cached(
         f"stock_detail:{clean_symbol}",
         STOCK_DETAIL_CACHE_TTL,
         lambda: fetch_stock_detail(clean_symbol),
     )
-    return _fallback_stock_detail(clean_symbol, data)
+    return with_news(data)
 
 
 def apply_nifty_impact(rows, snapshot):
@@ -2793,6 +3106,33 @@ def merge_stock_lists(primary, secondary):
     return list(merged.values())
 
 
+def popup_priority_symbols(market, earnings=None, headlines=None):
+    symbols = {
+        row.get("display_symbol")
+        for group in (
+            market.get("gainers", [])[:8],
+            market.get("losers", [])[:8],
+            market.get("turnover", [])[:8],
+            market.get("unusual_volume", [])[:8],
+            market.get("nifty50_rows", []),
+        )
+        for row in group
+        if row.get("display_symbol")
+    }
+    symbols.update(
+        item.get("symbol")
+        for item in earnings or []
+        if item.get("symbol")
+    )
+    for headline in headlines or []:
+        symbols.update(
+            item.get("symbol")
+            for item in headline.get("stocks", [])
+            if item.get("symbol")
+        )
+    return symbols
+
+
 def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False):
     broad_stocks = broad_stocks or stocks
     all_stocks = merge_stock_lists(stocks, broad_stocks)
@@ -2822,7 +3162,16 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
     rows = [rows_by_symbol[stock["symbol"]] for stock in stocks if stock["symbol"] in rows_by_symbol]
     broad_rows = [rows_by_symbol[stock["symbol"]] for stock in broad_stocks if stock["symbol"] in rows_by_symbol]
     broad_snapshot = fetch_nse_nifty500_snapshot()
+    snapshot_timestamp = next(
+        (
+            item.get("lastUpdateTime")
+            for item in broad_snapshot
+            if str(item.get("symbol") or "").upper() in {"NIFTY 500", "NIFTY500"}
+        ),
+        None,
+    )
     apply_nse_quote_snapshot(broad_rows, broad_snapshot)
+    update_live_row_metrics(broad_rows)
     impact_available = False
     try:
         nse_snapshot = nse_snapshot or fetch_nse_nifty50_snapshot()
@@ -2843,30 +3192,97 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
         key=lambda row: row["volume"],
         reverse=True,
     )
+    turnover = sorted(
+        [row for row in broad_rows if row.get("traded_value") is not None],
+        key=lambda row: row["traded_value"],
+        reverse=True,
+    )
+    unusual_volume = sorted(
+        [row for row in broad_rows if row.get("relative_volume") is not None],
+        key=lambda row: row["relative_volume"],
+        reverse=True,
+    )
+    delivery_leaders = sorted(
+        [row for row in broad_rows if row.get("delivery_percent") is not None],
+        key=lambda row: row["delivery_percent"],
+        reverse=True,
+    )
+    breakouts = sorted(
+        [row for row in broad_rows if row.get("price_volume_breakout")],
+        key=lambda row: (
+            row.get("relative_volume") or 0,
+            row.get("percent") or 0,
+        ),
+        reverse=True,
+    )
+    contribution_leaders = sorted(
+        [row for row in rows if row.get("nifty_impact") is not None],
+        key=lambda row: row["nifty_impact"],
+        reverse=True,
+    )
+    contribution_drags = sorted(
+        [row for row in rows if row.get("nifty_impact") is not None],
+        key=lambda row: row["nifty_impact"],
+    )
+    market_gauges, _ = get_cached_swr(
+        "nse_market_gauges",
+        MARKET_CACHE_TTL,
+        fetch_nse_market_gauges,
+    )
+    sectors = build_sector_performance(broad_rows)
+    market_stats = build_market_stats(broad_rows)
+    breadth = build_breadth(broad_rows)
+    breadth_history = record_market_breadth_history(breadth, market_stats)
     return {
         "indices": build_index_cards(index_history, nse_index_cards),
+        "market_gauges": market_gauges or [],
         "rows": broad_rows,
         "nifty50_rows": rows,
-        "breadth": build_breadth(broad_rows),
+        "breadth": breadth,
+        "breadth_history": breadth_history,
         "gainers": gainers[:14],
         "losers": losers[:14],
-        "active": active[:14],
+        "active": turnover[:14],
+        "turnover": turnover[:14],
+        "volume_leaders": active[:14],
+        "unusual_volume": unusual_volume[:14],
+        "delivery_leaders": delivery_leaders[:10],
+        "breakouts": breakouts[:10],
+        "contribution_leaders": contribution_leaders[:6],
+        "contribution_drags": contribution_drags[:6],
         "signals": sorted(broad_rows, key=lambda row: abs(row["percent"] or 0), reverse=True)[:18],
-        "sectors": build_sector_performance(broad_rows),
+        "sectors": sectors,
+        "sector_rotation": sorted(
+            [sector for sector in sectors if sector.get("month_change") is not None],
+            key=lambda sector: sector["month_change"],
+            reverse=True,
+        ),
         "heatmap": build_heatmap(rows),
         "hover_data": build_stock_hover_data(broad_rows),
         "impact_available": impact_available,
-        "market_stats": build_market_stats(broad_rows),
+        "market_stats": market_stats,
         "internals": build_market_internals(rows),
         "insights": build_dashboard_insights(broad_rows, rows),
         "dashboard_notes": build_dashboard_notes(broad_rows, rows),
+        "breadth_divergence": build_breadth_divergence(broad_rows, rows),
+        "data_timestamp": snapshot_timestamp,
+        "refreshed_at": datetime.now(IST).strftime("%Y-%m-%d %H:%M IST"),
     }
 
 
 def build_market_stats(rows):
     priced = [row for row in rows if row["percent"] is not None]
     volumes = [row["volume"] for row in rows if row["volume"] is not None]
-    market_caps = [row["market_cap"] for row in rows if row["market_cap"] is not None]
+    free_float_caps = [
+        row["free_float_market_cap"]
+        for row in rows
+        if row.get("free_float_market_cap") is not None
+    ]
+    traded_values = [
+        row["traded_value"]
+        for row in rows
+        if row.get("traded_value") is not None
+    ]
     positive = [row for row in priced if row["percent"] > 0]
     return {
         "tracked": len(rows),
@@ -2874,7 +3290,113 @@ def build_market_stats(rows):
         "advance_ratio": len(positive) / len(priced) * 100 if priced else 0,
         "average_change": sum(row["percent"] for row in priced) / len(priced) if priced else None,
         "total_volume": sum(volumes),
-        "total_market_cap": sum(market_caps),
+        "total_traded_value": sum(traded_values),
+        "free_float_market_cap": sum(free_float_caps),
+        "free_float_coverage": len(free_float_caps),
+    }
+
+
+def record_market_breadth_history(breadth, market_stats, now=None):
+    now = now or datetime.now(IST)
+    market_breadth = breadth[0] if breadth else {}
+    snapshot = {
+        "timestamp": now.isoformat(),
+        "label": now.strftime("%I:%M %p"),
+        "advancers": int(market_breadth.get("left_count") or 0),
+        "decliners": int(market_breadth.get("right_count") or 0),
+        "advance_ratio": round(float(market_stats.get("advance_ratio") or 0), 2),
+        "average_change": market_stats.get("average_change"),
+    }
+    with _CACHE_LOCK:
+        cached = _CACHE.get(MARKET_BREADTH_HISTORY_KEY)
+    if not cached:
+        cached = _read_persistent_cache(MARKET_BREADTH_HISTORY_KEY)
+    history = list(cached.get("data") or []) if isinstance(cached, dict) else []
+    if history:
+        try:
+            last_time = datetime.fromisoformat(history[-1]["timestamp"])
+        except (KeyError, TypeError, ValueError):
+            last_time = None
+        if last_time and (now - last_time).total_seconds() < 10 * 60:
+            history[-1] = snapshot
+        else:
+            history.append(snapshot)
+    else:
+        history.append(snapshot)
+    history = history[-48:]
+    with _CACHE_LOCK:
+        _CACHE[MARKET_BREADTH_HISTORY_KEY] = {
+            "data": history,
+            "expires": time_module.time() + INSIGHTS_SNAPSHOT_TTL,
+        }
+    _write_persistent_cache(
+        MARKET_BREADTH_HISTORY_KEY,
+        history,
+        INSIGHTS_SNAPSHOT_TTL,
+    )
+    return history
+
+
+def record_fii_dii_history(rows):
+    if not rows:
+        return []
+    with _CACHE_LOCK:
+        cached = _CACHE.get(FII_DII_HISTORY_KEY)
+    if not cached:
+        cached = _read_persistent_cache(FII_DII_HISTORY_KEY)
+    history = list(cached.get("data") or []) if isinstance(cached, dict) else []
+    by_date = {
+        item.get("date"): item
+        for item in history
+        if isinstance(item, dict) and item.get("date")
+    }
+    for row in rows:
+        flow_date = row.get("date")
+        if not flow_date:
+            continue
+        entry = by_date.setdefault(flow_date, {"date": flow_date, "fii": None, "dii": None})
+        category = str(row.get("category") or "").upper()
+        if category.startswith("FII"):
+            entry["fii"] = row.get("net")
+        elif category.startswith("DII"):
+            entry["dii"] = row.get("net")
+    history = list(by_date.values())[-10:]
+    with _CACHE_LOCK:
+        _CACHE[FII_DII_HISTORY_KEY] = {
+            "data": history,
+            "expires": time_module.time() + INSIGHTS_SNAPSHOT_TTL,
+        }
+    _write_persistent_cache(FII_DII_HISTORY_KEY, history, INSIGHTS_SNAPSHOT_TTL)
+    return history
+
+
+def build_breadth_divergence(rows, nifty_rows):
+    priced = [row for row in rows if row.get("percent") is not None]
+    nifty_priced = [row for row in nifty_rows if row.get("percent") is not None]
+    if not priced or not nifty_priced:
+        return {"active": False, "label": "Breadth signal unavailable", "tone": "neutral"}
+    advance_ratio = sum(row["percent"] > 0 for row in priced) / len(priced) * 100
+    broad_average = sum(row["percent"] for row in priced) / len(priced)
+    nifty_average = sum(row["percent"] for row in nifty_priced) / len(nifty_priced)
+    if nifty_average > 0 and advance_ratio < 50:
+        return {
+            "active": True,
+            "label": "Narrow rally",
+            "detail": f"NIFTY stocks average {nifty_average:+.2f}% while only {advance_ratio:.1f}% of NIFTY 500 stocks advance.",
+            "tone": "warning",
+        }
+    if nifty_average < 0 and advance_ratio > 50:
+        return {
+            "active": True,
+            "label": "Positive underlying breadth",
+            "detail": f"NIFTY stocks average {nifty_average:+.2f}% while {advance_ratio:.1f}% of NIFTY 500 stocks advance.",
+            "tone": "positive",
+        }
+    return {
+        "active": False,
+        "label": "Breadth aligned",
+        "detail": f"Broad participation is {advance_ratio:.1f}% with an average move of {broad_average:+.2f}%.",
+        "tone": "neutral",
     }
 
 
@@ -3046,6 +3568,96 @@ def fetch_headlines():
     return headlines[:10]
 
 
+HEADLINE_MATCH_STOPWORDS = {
+    "limited", "india", "indian", "industries", "industry", "company",
+    "corporation", "enterprise", "enterprises", "services", "finance",
+    "financial", "holdings", "energy", "power", "bank", "group",
+}
+
+
+def _headline_stock_score(title, row):
+    normalized_title = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    if not normalized_title:
+        return 0
+    title_words = set(normalized_title.split())
+    symbol = str(row.get("display_symbol") or "").lower()
+    score = 0
+    if len(symbol) >= 3 and symbol in title_words:
+        score += 12
+    name_words = [
+        word
+        for word in re.sub(r"[^a-z0-9]+", " ", str(row.get("name") or "").lower()).split()
+        if len(word) >= 4 and word not in HEADLINE_MATCH_STOPWORDS
+    ]
+    unique_words = list(dict.fromkeys(name_words))
+    matched = [word for word in unique_words if word in title_words]
+    if len(unique_words) >= 2 and len(matched) >= 2:
+        score += 10 + min(len(matched), 3)
+    elif matched and len(matched[0]) >= 6:
+        score += 6
+    return score
+
+
+def enrich_headlines_with_stocks(headlines, rows):
+    enriched = []
+    context = defaultdict(list)
+    for headline_index, headline in enumerate(headlines):
+        matches = []
+        for row in rows:
+            score = _headline_stock_score(headline.get("title"), row)
+            if score < 6:
+                continue
+            matches.append(
+                {
+                    "score": score,
+                    "symbol": row["display_symbol"],
+                    "name": row.get("name") or row["display_symbol"],
+                    "sector": row.get("sector") or "",
+                    "price": row.get("price"),
+                    "percent": row.get("percent"),
+                    "five_day_change": row.get("five_day_change"),
+                    "month_change": row.get("month_change"),
+                    "relative_volume": row.get("relative_volume"),
+                    "sector_relative_change": row.get("sector_relative_change"),
+                }
+            )
+        matches.sort(key=lambda item: (item["score"], abs(item.get("percent") or 0)), reverse=True)
+        matches = matches[:4]
+        item = {**headline, "stocks": matches, "headline_index": headline_index}
+        enriched.append(item)
+        for match in matches:
+            context[match["symbol"]].append(
+                {
+                    "title": headline.get("title") or "",
+                    "url": headline.get("url") or "",
+                    "source": headline.get("source") or "",
+                    "time": headline.get("time") or "",
+                    "headline_index": headline_index,
+                }
+            )
+    return enriched, {symbol: items[:3] for symbol, items in context.items()}
+
+
+def build_stock_event_context(earnings, events):
+    context = {}
+    for item in earnings:
+        context[item["symbol"]] = {
+            "type": "Earnings",
+            "date": item.get("date_label"),
+            "title": f"{item['symbol']} earnings release",
+        }
+    for event in events:
+        match = re.match(r"([A-Z0-9&.-]+)\s", event.get("title") or "")
+        if not match or match.group(1) in context:
+            continue
+        context[match.group(1)] = {
+            "type": event.get("type"),
+            "date": event.get("date_label"),
+            "title": event.get("title"),
+        }
+    return context
+
+
 def _format_news_timestamp(value):
     if not value:
         return ""
@@ -3055,7 +3667,7 @@ def _format_news_timestamp(value):
         return ""
 
 
-def _parse_stock_news_rss(content, limit=3):
+def _parse_stock_news_rss(content, limit=6):
     root = ET.fromstring(content)
     news = []
     for item in root.findall(".//item"):
@@ -3079,15 +3691,17 @@ def _parse_stock_news_rss(content, limit=3):
 
 def _fallback_stock_news_from_market_headlines(symbol, company_name=""):
     symbol = _normalize_symbol(symbol)
-    terms = {symbol.lower()}
+    ignored = {"limited", "company", "industries", "india", "indian", "national", "corporation"}
+    terms = set()
     for part in re.split(r"[^A-Za-z0-9]+", company_name or ""):
-        if len(part) >= 4:
+        if len(part) >= 5 and part.lower() not in ignored:
             terms.add(part.lower())
     headlines, _ = get_cached_swr("news", NEWS_CACHE_TTL, fetch_headlines, cold_async=True)
     matches = []
     for item in headlines or []:
         title = (item.get("title") or "").lower()
-        if any(term and term in title for term in terms):
+        symbol_match = bool(re.search(rf"(?<![a-z0-9]){re.escape(symbol.lower())}(?![a-z0-9])", title))
+        if symbol_match or any(term in title for term in terms):
             matches.append(
                 {
                     "title": item.get("title", ""),
@@ -3096,7 +3710,26 @@ def _fallback_stock_news_from_market_headlines(symbol, company_name=""):
                     "published": item.get("time", ""),
                 }
             )
-        if len(matches) >= 3:
+        if len(matches) >= 6:
+            break
+    return matches
+
+
+def _filter_company_news(items, symbol, company_name, limit=6):
+    clean_symbol = _normalize_symbol(symbol).lower()
+    ignored = {"limited", "company", "industries", "india", "indian", "national", "corporation"}
+    company_terms = {
+        part.lower()
+        for part in re.split(r"[^A-Za-z0-9]+", company_name or "")
+        if len(part) >= 5 and part.lower() not in ignored
+    }
+    matches = []
+    for item in items:
+        title = (item.get("title") or "").lower()
+        if clean_symbol not in title and not any(term in title for term in company_terms):
+            continue
+        matches.append(item)
+        if len(matches) >= limit:
             break
     return matches
 
@@ -3108,21 +3741,65 @@ def fetch_stock_news(symbol, company_name=""):
 
     def loader():
         rss_symbol = clean_symbol if clean_symbol.endswith(".NS") else f"{clean_symbol}.NS"
-        url = (
-            "https://feeds.finance.yahoo.com/rss/2.0/headline?"
-            f"s={quote(rss_symbol)}&region=IN&lang=en-IN"
-        )
-        response = requests.get(
-            url,
-            timeout=6,
-            headers={"User-Agent": "Mozilla/5.0 SimplyTrading/1.0"},
-        )
-        response.raise_for_status()
-        parsed = _parse_stock_news_rss(response.content, limit=3)
-        return parsed or _fallback_stock_news_from_market_headlines(clean_symbol, company_name)
+        collected = []
+        seen = set()
+
+        def append_news(items):
+            for item in items:
+                identity = (
+                    (item.get("url") or "").lower(),
+                    (item.get("title") or "").lower(),
+                )
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                collected.append(item)
+                if len(collected) >= 6:
+                    break
+
+        try:
+            url = (
+                "https://feeds.finance.yahoo.com/rss/2.0/headline?"
+                f"s={quote(rss_symbol)}&region=IN&lang=en-IN"
+            )
+            response = requests.get(
+                url,
+                timeout=6,
+                headers={"User-Agent": "Mozilla/5.0 SimplyTrading/1.0"},
+            )
+            response.raise_for_status()
+            yahoo_items = _parse_stock_news_rss(response.content, limit=24)
+            append_news(_filter_company_news(yahoo_items, clean_symbol, company_name, limit=6))
+        except (requests.RequestException, ET.ParseError, ValueError, TypeError):
+            pass
+        try:
+            if len(collected) >= 6:
+                return collected
+            search_name = re.sub(
+                r"\b(?:limited|ltd\.?|company|corporation)\b",
+                "",
+                company_name or clean_symbol,
+                flags=re.IGNORECASE,
+            )
+            search_name = re.sub(r"\s+", " ", search_name).strip()
+            query_text = f'"{search_name}" stock OR shares'
+            response = requests.get(
+                "https://news.google.com/rss/search",
+                params={"q": query_text, "hl": "en-IN", "gl": "IN", "ceid": "IN:en"},
+                timeout=6,
+                headers={"User-Agent": "Mozilla/5.0 SimplyTrading/1.0"},
+            )
+            response.raise_for_status()
+            google_items = _parse_stock_news_rss(response.content, limit=24)
+            append_news(_filter_company_news(google_items, clean_symbol, company_name, limit=6))
+        except (requests.RequestException, ET.ParseError, ValueError, TypeError):
+            pass
+        if collected:
+            return collected
+        return _fallback_stock_news_from_market_headlines(clean_symbol, company_name)
 
     data, _ = get_cached(
-        f"stock_news:{clean_symbol}",
+        f"stock_news:v6:{clean_symbol}",
         STOCK_DETAIL_CACHE_TTL,
         loader,
     )
@@ -3222,6 +3899,261 @@ def common_context(active_page, show_header_search):
     }
 
 
+def build_stock_page_context(symbol):
+    clean_symbol = _normalize_symbol(symbol)
+    market_context = load_cached_market_context()
+    market = market_context["market"]
+    rows = market.get("rows") or []
+    found_row = next(
+        (
+            item for item in rows
+            if _normalize_symbol(item.get("display_symbol") or item.get("symbol")) == clean_symbol
+        ),
+        None,
+    ) or _cached_dashboard_row_for_symbol(clean_symbol)
+    popup_data = get_latest_stock_popup_details_data()
+    raw_detail = (popup_data.get("details") or {}).get(clean_symbol, {})
+    detail = _fallback_stock_detail(clean_symbol, raw_detail)
+    if found_row:
+        detail = {
+            **detail,
+            "delivery_percent": detail.get("delivery_percent") or found_row.get("delivery_percent"),
+            "market_cap": detail.get("market_cap") or found_row.get("market_cap") or found_row.get("free_float_market_cap"),
+        }
+    row = {
+        "display_symbol": clean_symbol,
+        "name": detail.get("name") or clean_symbol,
+        "sector": detail.get("sector") or "Unclassified",
+        "price": detail.get("price"),
+        "percent": None,
+        "change": None,
+        "volume": None,
+        "traded_value": None,
+        "relative_volume": None,
+        "delivery_percent": detail.get("delivery_percent"),
+        "day_open": None,
+        "day_high": None,
+        "day_low": None,
+        "high52_distance": None,
+        "low52_distance": None,
+        "five_day_change": None,
+        "month_change": None,
+        "year_change": None,
+        "signal": None,
+        "accumulation_score": 0,
+        "sector_rank": None,
+        "sector_stock_count": None,
+        "sector_relative_change": None,
+        "chart_series": [],
+        **(found_row or {}),
+    }
+    sector = row.get("sector") or detail.get("sector") or "Unclassified"
+    peer_rows = [
+        item for item in rows
+        if item.get("sector") == sector
+        and _normalize_symbol(item.get("display_symbol")) != clean_symbol
+        and item.get("price") is not None
+    ]
+    peer_rows.sort(
+        key=lambda item: (
+            item.get("free_float_market_cap") or item.get("market_cap") or 0,
+            item.get("traded_value") or 0,
+        ),
+        reverse=True,
+    )
+    peer_details = popup_data.get("details") or {}
+    peers = []
+    for peer in peer_rows[:8]:
+        peer_symbol = peer["display_symbol"]
+        peer_detail = peer_details.get(peer_symbol, {})
+        peers.append(
+            {
+                "display_symbol": peer_symbol,
+                "name": peer.get("name") or peer_symbol,
+                "price": peer.get("price"),
+                "percent": peer.get("percent"),
+                "month_change": peer.get("month_change"),
+                "year_change": peer.get("year_change"),
+                "market_cap": peer_detail.get("market_cap") or peer.get("market_cap") or peer.get("free_float_market_cap"),
+                "pe_ratio": peer_detail.get("pe_ratio"),
+                "roe": peer_detail.get("roe"),
+                "signal": peer.get("signal"),
+            }
+        )
+    benchmark = next(
+        (item for item in market.get("indices", []) if item.get("name") == "NIFTY 50"),
+        {},
+    )
+    sector_summary = next(
+        (item for item in market.get("sectors", []) if item.get("name") == sector),
+        {},
+    )
+    growth = detail.get("growth") or {}
+    performance = {
+        "day": (row or {}).get("percent"),
+        "five_day": (row or {}).get("five_day_change"),
+        "month": growth.get("1m") if growth.get("1m") is not None else (row or {}).get("month_change"),
+        "three_month": growth.get("3m"),
+        "year": growth.get("1y") if growth.get("1y") is not None else (row or {}).get("year_change"),
+        "five_year": growth.get("5y"),
+    }
+    return {
+        "symbol": clean_symbol,
+        "row": row,
+        "detail": detail,
+        "performance": performance,
+        "peers": peers,
+        "benchmark": benchmark,
+        "sector_summary": sector_summary,
+        "market_average": (market.get("market_stats") or {}).get("average_change"),
+        "market_timestamp": market.get("data_timestamp") or market.get("refreshed_at"),
+        "stale": bool(market_context.get("market_stale") or not raw_detail),
+    }
+
+
+def build_rules_stock_analysis(context, fallback_reason=None):
+    row = context.get("row") or {}
+    detail = context.get("detail") or {}
+    performance = context.get("performance") or {}
+    peers = context.get("peers") or []
+    strengths = []
+    risks = []
+    score = 0
+    if row.get("signal") == "Uptrend":
+        score += 2
+        strengths.append("Price is in an established uptrend on the cached technical snapshot.")
+    elif row.get("signal") == "Downtrend":
+        score -= 2
+        risks.append("The cached technical snapshot classifies the stock as a downtrend.")
+    accumulation = int(row.get("accumulation_score") or 0)
+    if accumulation >= 2:
+        score += 2
+        strengths.append(f"{accumulation}/3 accumulation signals are active.")
+    relative = row.get("sector_relative_change")
+    if relative is not None:
+        if relative > 0:
+            score += 1
+            strengths.append(f"The stock is outperforming its sector by {relative:+.2f} percentage points today.")
+        elif relative < 0:
+            score -= 1
+            risks.append(f"The stock is lagging its sector by {relative:+.2f} percentage points today.")
+    year_growth = performance.get("year")
+    if year_growth is not None and year_growth > 10:
+        score += 1
+        strengths.append(f"One-year price performance is {year_growth:+.1f}%.")
+    elif year_growth is not None and year_growth < -10:
+        score -= 1
+        risks.append(f"One-year price performance is {year_growth:+.1f}%.")
+    roe = detail.get("roe")
+    if roe is not None and roe >= 15:
+        strengths.append(f"Reported return on equity is {roe:.1f}%.")
+    debt_equity = detail.get("debt_equity")
+    if debt_equity is not None and debt_equity > 1.5:
+        score -= 1
+        risks.append(f"Debt/equity is elevated at {debt_equity:.2f}x.")
+    if not strengths:
+        strengths.append("No strong positive confirmation is present in the current cached evidence.")
+    if not risks:
+        risks.append("Market, earnings and valuation conditions can change after the cached timestamp.")
+    peer_pes = [peer["pe_ratio"] for peer in peers if peer.get("pe_ratio") is not None]
+    peer_pe = median(peer_pes) if peer_pes else None
+    stock_pe = detail.get("pe_ratio")
+    valuation = "Valuation comparison is unavailable because current peer P/E coverage is incomplete."
+    if stock_pe is not None and peer_pe is not None:
+        valuation = (
+            f"P/E is {stock_pe:.1f}x versus a cached peer median of {peer_pe:.1f}x, "
+            f"a {(stock_pe / peer_pe - 1) * 100:+.1f}% premium/discount."
+        )
+    verdict = "Constructive" if score >= 3 else "Cautious" if score <= -2 else "Neutral"
+    return {
+        "symbol": context.get("symbol"),
+        "verdict": verdict,
+        "executive_summary": (
+            f"{context.get('symbol')} has a {verdict.lower()} evidence mix based on cached price trend, "
+            "relative performance, accumulation, fundamentals and peer data."
+        ),
+        "technical_view": (
+            f"Signal: {row.get('signal') or 'Unavailable'}; accumulation {accumulation}/3; "
+            f"5-day move {performance.get('five_day'):+.2f}%."
+            if performance.get("five_day") is not None
+            else f"Signal: {row.get('signal') or 'Unavailable'}; accumulation {accumulation}/3."
+        ),
+        "valuation_view": valuation,
+        "peer_context": (
+            f"Compared with {len(peers)} cached {row.get('sector') or detail.get('sector') or 'sector'} peers. "
+            f"Current sector rank is {row.get('sector_rank') or '-'} of {row.get('sector_stock_count') or '-'} by daily move."
+        ),
+        "strengths": strengths[:5],
+        "risks": risks[:5],
+        "watch_items": [
+            "Confirm the latest exchange price and volume before acting.",
+            "Watch the next earnings or corporate event and any material company announcement.",
+            "Reassess if the technical signal or sector-relative trend changes.",
+        ],
+        "generated_by": "rules",
+        "fallback_reason": fallback_reason,
+        "generated_at": datetime.now(IST).strftime("%d %b %Y %I:%M %p IST"),
+        "disclaimer": "Educational analysis only. This is not investment advice or a recommendation to buy or sell.",
+    }
+
+
+def generate_stock_ai_analysis(context):
+    baseline = build_rules_stock_analysis(context)
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return build_rules_stock_analysis(context, "GEMINI_API_KEY is not configured; showing rules-based analysis.")
+    model = os.getenv("GEMINI_STOCK_MODEL", os.getenv("GEMINI_FAST_MODEL", "gemini-2.5-flash-lite"))
+    evidence = {
+        "symbol": context.get("symbol"),
+        "market_timestamp": context.get("market_timestamp"),
+        "row": context.get("row"),
+        "fundamentals": context.get("detail"),
+        "performance": context.get("performance"),
+        "benchmark": context.get("benchmark"),
+        "sector": context.get("sector_summary"),
+        "peers": context.get("peers"),
+        "rules_baseline": baseline,
+    }
+    prompt = (
+        "Act as a careful Indian equity research analyst. Use only the supplied cached evidence. "
+        "Return JSON with keys verdict, executive_summary, technical_view, valuation_view, peer_context, "
+        "strengths, risks and watch_items. strengths, risks and watch_items must be arrays of 3-5 concise strings. "
+        "Use a verdict of Constructive, Neutral or Cautious. Explicitly identify missing/stale evidence, do not "
+        "invent news or financial values, and do not give personalized investment advice.\n\n"
+        + json.dumps(_json_safe(evidence), ensure_ascii=True)
+    )
+    try:
+        response = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2, "maxOutputTokens": 4096},
+            },
+            timeout=int(os.getenv("GEMINI_TIMEOUT_SECONDS", "90")),
+        )
+        response.raise_for_status()
+        text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
+        generated = json.loads(text)
+        verdict = generated.get("verdict")
+        if verdict not in {"Constructive", "Neutral", "Cautious"}:
+            raise ValueError("Invalid verdict")
+        for key in ("strengths", "risks", "watch_items"):
+            if not isinstance(generated.get(key), list):
+                raise ValueError(f"Missing {key}")
+        return {
+            **baseline,
+            **generated,
+            "generated_by": "gemini",
+            "fallback_reason": None,
+            "generated_at": datetime.now(IST).strftime("%d %b %Y %I:%M %p IST"),
+        }
+    except (requests.RequestException, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        return build_rules_stock_analysis(context, f"AI provider unavailable ({type(error).__name__}); showing rules-based analysis.")
+
+
 @app.route("/health")
 def health():
     return {"status": "ok"}, 200
@@ -3229,7 +4161,40 @@ def health():
 
 @app.route("/api/stocks/<symbol>")
 def stock_detail_api(symbol):
-    return jsonify(get_stock_detail(symbol))
+    response = jsonify(get_stock_detail(symbol))
+    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=86400"
+    response.add_etag()
+    return response.make_conditional(request)
+
+
+@app.route("/api/stock-details")
+def stock_details_snapshot_api():
+    data = get_latest_stock_popup_details_data()
+    response = jsonify(
+        {
+            "status": "ready" if data["details"] else "warming",
+            **data,
+        }
+    )
+    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=86400"
+    response.add_etag()
+    return response.make_conditional(request)
+
+
+@app.post("/api/stocks/<symbol>/analysis")
+def stock_analysis_api(symbol):
+    context = build_stock_page_context(symbol)
+    clean_symbol = context["symbol"]
+    stamp = str(context.get("market_timestamp") or datetime.now(IST).date())
+    cache_stamp = hashlib.sha256(stamp.encode("utf-8", errors="ignore")).hexdigest()[:12]
+    analysis, _ = get_cached(
+        f"stock_ai_analysis:{clean_symbol}:{cache_stamp}",
+        STOCK_AI_CACHE_TTL,
+        lambda: generate_stock_ai_analysis(context),
+    )
+    response = jsonify(analysis)
+    response.headers["Cache-Control"] = "private, max-age=300"
+    return response
 
 
 @app.route("/api/insights-data")
@@ -3262,12 +4227,22 @@ def insights_data_api():
 def empty_market_dashboard():
     return {
         "indices": [],
+        "market_gauges": [],
         "rows": [],
         "nifty50_rows": [],
         "breadth": [],
         "gainers": [],
         "losers": [],
         "active": [],
+        "turnover": [],
+        "volume_leaders": [],
+        "unusual_volume": [],
+        "delivery_leaders": [],
+        "breakouts": [],
+        "contribution_leaders": [],
+        "contribution_drags": [],
+        "sector_rotation": [],
+        "breadth_history": [],
         "signals": [],
         "sectors": [],
         "heatmap": [],
@@ -3277,6 +4252,13 @@ def empty_market_dashboard():
         "internals": build_market_internals([]),
         "insights": build_dashboard_insights([]),
         "dashboard_notes": build_dashboard_notes([]),
+        "breadth_divergence": {
+            "active": False,
+            "label": "Breadth signal unavailable",
+            "tone": "neutral",
+        },
+        "data_timestamp": None,
+        "refreshed_at": None,
     }
 
 
@@ -3351,6 +4333,19 @@ def load_cached_market_context():
 @app.route("/blog/")
 def blog_redirect():
     return redirect("/articles", code=302)
+
+
+@app.route("/stock/<symbol>")
+def stock_analysis_page(symbol):
+    context = build_stock_page_context(symbol)
+    return render_template(
+        "stock_analysis.html",
+        **common_context("stock", True),
+        stock=context,
+        stock_json=_json_safe(context),
+        format_market_cap=format_market_cap,
+        format_volume=format_volume,
+    )
 
 
 @app.route("/articles")
@@ -3428,17 +4423,38 @@ def dashboard():
     )
     headlines = headlines or []
     fii_dii = fii_dii or []
-    popup_detail_data, popup_details_stale = get_stock_popup_details(market["rows"])
-    popup_details = popup_detail_data.get("details", {}) or get_cached_stock_popup_details_snapshot(market["rows"])
+    calendar = build_calendar_panels(calendar_entries or [])
+    earnings = enrich_earnings(calendar["earnings"], market["rows"])
+    enriched_headlines, headline_context = enrich_headlines_with_stocks(
+        headlines,
+        market["rows"],
+    )
+    stock_event_context = build_stock_event_context(earnings, calendar["events"])
+    popup_detail_data = get_latest_stock_popup_details_data()
+    all_popup_details = popup_detail_data.get("details") or {}
+    priority_symbols = popup_priority_symbols(market, earnings, enriched_headlines)
+    initial_popup_details = {
+        symbol: all_popup_details[symbol]
+        for symbol in priority_symbols
+        if symbol in all_popup_details
+    }
+    popup_details_stale = not bool(all_popup_details)
     market = {
         **market,
         "hover_data": build_stock_hover_data_with_details(
             market["rows"],
-            popup_details,
+            initial_popup_details,
+            headline_context,
+            stock_event_context,
         ),
     }
-    calendar = build_calendar_panels(calendar_entries or [])
-    earnings = enrich_earnings(calendar["earnings"], market["rows"])
+    fii_dii_history = record_fii_dii_history(fii_dii)
+    fii_dii_recent = fii_dii_history[-5:]
+    fii_dii_summary = {
+        "sessions": len(fii_dii_recent),
+        "fii": sum(item.get("fii") or 0 for item in fii_dii_recent),
+        "dii": sum(item.get("dii") or 0 for item in fii_dii_recent),
+    }
     leading_index = next((card for card in market["indices"] if card.get("available")), None)
     brief = (
         f"Indian markets: {leading_index['name']} at {leading_index['price']:,.2f}, "
@@ -3450,11 +4466,13 @@ def dashboard():
         "dashboard.html",
         **common_context("home", True),
         market=market,
-        headlines=headlines,
+        headlines=enriched_headlines,
         market_stale=market_stale,
         popup_details_stale=popup_details_stale,
         news_stale=news_stale,
         fii_dii=fii_dii,
+        fii_dii_history=fii_dii_history,
+        fii_dii_summary=fii_dii_summary,
         fii_dii_stale=fii_dii_stale,
         calendar_stale=calendar_stale,
         constituents_stale=market_context["constituents_stale"],

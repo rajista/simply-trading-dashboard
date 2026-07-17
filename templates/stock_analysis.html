@@ -1,0 +1,119 @@
+{% extends "layout.html" %}
+
+{% block title %}{{ stock.symbol }} Stock Analysis - Simply Trading{% endblock %}
+
+{% block content %}
+<section class="stock-page-hero panel">
+    <div class="stock-page-heading">
+        <a href="{{ url_for('dashboard') }}">&larr; Market dashboard</a>
+        <span>{{ stock.row.sector or stock.detail.sector or "Indian Equity" }}</span>
+        <h1>{{ stock.symbol }} <small>{{ stock.row.name or stock.detail.name }}</small></h1>
+        <p>{{ stock.detail.industry or "NSE listed company" }}{% if stock.market_timestamp %} &middot; Market snapshot {{ stock.market_timestamp }}{% endif %}</p>
+    </div>
+    <div class="stock-page-quote">
+        <span>Last traded</span>
+        <strong>{{ "{:,.2f}".format(stock.row.price) if stock.row.price is not none else "-" }}</strong>
+        <b class="{{ 'positive' if stock.performance.day is not none and stock.performance.day >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.performance.day) if stock.performance.day is not none else "-" }}</b>
+        {% if stock.stale %}<small>Some fields use the latest cached snapshot</small>{% endif %}
+    </div>
+</section>
+
+<section class="stock-performance-strip panel" aria-label="Stock performance">
+    {% for label, value in [("1 Day", stock.performance.day), ("5 Days", stock.performance.five_day), ("1 Month", stock.performance.month), ("3 Months", stock.performance.three_month), ("1 Year", stock.performance.year), ("5 Years", stock.performance.five_year)] %}
+    <div><span>{{ label }}</span><strong class="{{ 'positive' if value is not none and value >= 0 else 'negative' }}">{{ "%+.2f%%"|format(value) if value is not none else "-" }}</strong></div>
+    {% endfor %}
+</section>
+
+<section class="stock-page-grid">
+    <article class="stock-chart-panel panel">
+        <header><div><span>Price trend</span><h2>Recent daily performance</h2></div><small>Latest 60 sessions</small></header>
+        {% if stock.row.chart_series|length > 1 %}<svg viewBox="0 0 760 250" preserveAspectRatio="none" aria-label="{{ stock.symbol }} recent price chart">
+            <g class="stock-chart-grid"><line x1="0" y1="55" x2="760" y2="55"/><line x1="0" y1="125" x2="760" y2="125"/><line x1="0" y1="195" x2="760" y2="195"/></g>
+            <polyline data-stock-page-chart points=""></polyline>
+        </svg>{% else %}<div class="stock-chart-unavailable">Price history is warming. The remaining cached analysis is available below.</div>{% endif %}
+        <div class="stock-comparison-grid">
+            <div><span>{{ stock.symbol }} today</span><b class="{{ 'positive' if stock.performance.day is not none and stock.performance.day >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.performance.day) if stock.performance.day is not none else "-" }}</b></div>
+            <div><span>NIFTY 50 today</span><b class="{{ 'positive' if stock.benchmark.percent is defined and stock.benchmark.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.benchmark.percent) if stock.benchmark.percent is defined and stock.benchmark.percent is not none else "-" }}</b></div>
+            <div><span>Sector average</span><b class="{{ 'positive' if stock.sector_summary.percent is defined and stock.sector_summary.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.sector_summary.percent) if stock.sector_summary.percent is defined and stock.sector_summary.percent is not none else "-" }}</b></div>
+            <div><span>NIFTY 500 average</span><b class="{{ 'positive' if stock.market_average is not none and stock.market_average >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.market_average) if stock.market_average is not none else "-" }}</b></div>
+        </div>
+    </article>
+
+    <article class="stock-snapshot-panel panel">
+        <header><span>Market snapshot</span><h2>Price, participation and setup</h2></header>
+        <div class="stock-metric-grid">
+            <div><span>Open</span><b>{{ "{:,.2f}".format(stock.row.day_open) if stock.row.day_open is defined and stock.row.day_open is not none else "-" }}</b></div>
+            <div><span>High / Low</span><b>{{ "{:,.2f}".format(stock.row.day_high) if stock.row.day_high is defined and stock.row.day_high is not none else "-" }} / {{ "{:,.2f}".format(stock.row.day_low) if stock.row.day_low is defined and stock.row.day_low is not none else "-" }}</b></div>
+            <div><span>Volume</span><b>{{ format_volume(stock.row.volume) }}</b></div>
+            <div><span>Turnover</span><b>{{ format_market_cap(stock.row.traded_value) }}</b></div>
+            <div><span>Relative volume</span><b>{{ "%.2fx"|format(stock.row.relative_volume) if stock.row.relative_volume is defined and stock.row.relative_volume is not none else "-" }}</b></div>
+            <div><span>Delivery</span><b>{{ "%.2f%%"|format(stock.detail.delivery_percent) if stock.detail.delivery_percent is not none else "-" }}</b></div>
+            <div><span>Technical signal</span><b>{{ stock.row.signal or "Unavailable" }}</b></div>
+            <div><span>Accumulation</span><b>{{ stock.row.accumulation_score or 0 }}/3</b></div>
+            <div><span>Sector rank</span><b>{{ stock.row.sector_rank or "-" }}/{{ stock.row.sector_stock_count or "-" }}</b></div>
+            <div><span>52W high distance</span><b>{{ "%+.2f%%"|format(stock.row.high52_distance) if stock.row.high52_distance is defined and stock.row.high52_distance is not none else "-" }}</b></div>
+        </div>
+    </article>
+
+    <article class="stock-fundamentals-panel panel">
+        <header><span>Fundamentals</span><h2>Profitability, valuation and balance sheet</h2></header>
+        <div class="stock-metric-grid financial">
+            <div><span>Market cap</span><b>{{ format_market_cap(stock.detail.market_cap) }}</b></div>
+            <div><span>Revenue</span><b>{{ format_market_cap(stock.detail.revenue) }}</b></div>
+            <div><span>P/E</span><b>{{ "%.2f"|format(stock.detail.pe_ratio) if stock.detail.pe_ratio is not none else "-" }}</b></div>
+            <div><span>3Y average P/E</span><b>{{ "%.2f"|format(stock.detail.avg_pe_3y) if stock.detail.avg_pe_3y is not none else "-" }}</b></div>
+            <div><span>Price / Book</span><b>{{ "%.2f"|format(stock.detail.price_to_book) if stock.detail.price_to_book is not none else "-" }}</b></div>
+            <div><span>ROE</span><b>{{ "%.2f%%"|format(stock.detail.roe) if stock.detail.roe is not none else "-" }}</b></div>
+            <div><span>ROCE</span><b>{{ "%.2f%%"|format(stock.detail.roce) if stock.detail.roce is not none else "-" }}</b></div>
+            <div><span>Operating margin</span><b>{{ "%.2f%%"|format(stock.detail.operating_profit_margin) if stock.detail.operating_profit_margin is not none else "-" }}</b></div>
+            <div><span>PAT margin</span><b>{{ "%.2f%%"|format(stock.detail.pat_margin) if stock.detail.pat_margin is not none else "-" }}</b></div>
+            <div><span>3Y profit CAGR</span><b>{{ "%.2f%%"|format(stock.detail.profit_cagr_3y) if stock.detail.profit_cagr_3y is not none else "-" }}</b></div>
+            <div><span>Debt / Equity</span><b>{{ "%.2f"|format(stock.detail.debt_equity) if stock.detail.debt_equity is not none else "-" }}</b></div>
+            <div><span>Dividend yield</span><b>{{ "%.2f%%"|format(stock.detail.dividend_yield) if stock.detail.dividend_yield is not none else "-" }}</b></div>
+        </div>
+    </article>
+
+    <article class="stock-ownership-panel panel">
+        <header><span>Ownership</span><h2>Latest available shareholding</h2></header>
+        <div class="ownership-bars">
+            {% for label, value, trend, class_name in [("Promoter", stock.detail.promoter_holding, stock.detail.promoter_trend, "promoter"), ("FII", stock.detail.fii_holding, stock.detail.fii_trend, "fii"), ("DII", stock.detail.dii_holding, stock.detail.dii_trend, "dii"), ("Retail / other", stock.detail.retail_holding, stock.detail.retail_trend, "retail")] %}
+            <div class="owner-{{ class_name }}"><span>{{ label }} <small>{{ trend or "change unavailable" }}</small></span><b>{{ "%.2f%%"|format(value) if value is not none else "-" }}</b><i><em style="width: {{ [value or 0, 100]|min }}%"></em></i></div>
+            {% endfor %}
+        </div>
+        <div class="business-summary"><strong>Business overview</strong><p>{{ stock.detail.description }}</p></div>
+    </article>
+
+    <article class="stock-peers-panel panel">
+        <header><span>Relative view</span><h2>{{ stock.row.sector or stock.detail.sector }} peers</h2></header>
+        <div class="table-scroll"><table>
+            <thead><tr><th>Company</th><th>Price</th><th>1D</th><th>1M</th><th>1Y</th><th>P/E</th><th>ROE</th><th>Signal</th></tr></thead>
+            <tbody>{% for peer in stock.peers %}<tr>
+                <td><a href="{{ url_for('stock_analysis_page', symbol=peer.display_symbol) }}">{{ peer.display_symbol }}</a><small>{{ peer.name }}</small></td>
+                <td>{{ "{:,.2f}".format(peer.price) }}</td>
+                <td class="{{ 'positive' if peer.percent is not none and peer.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(peer.percent) if peer.percent is not none else "-" }}</td>
+                <td class="{{ 'positive' if peer.month_change is not none and peer.month_change >= 0 else 'negative' }}">{{ "%+.1f%%"|format(peer.month_change) if peer.month_change is not none else "-" }}</td>
+                <td class="{{ 'positive' if peer.year_change is not none and peer.year_change >= 0 else 'negative' }}">{{ "%+.1f%%"|format(peer.year_change) if peer.year_change is not none else "-" }}</td>
+                <td>{{ "%.1f"|format(peer.pe_ratio) if peer.pe_ratio is not none else "-" }}</td>
+                <td>{{ "%.1f%%"|format(peer.roe) if peer.roe is not none else "-" }}</td>
+                <td>{{ peer.signal or "-" }}</td>
+            </tr>{% else %}<tr><td colspan="8" class="unavailable">Peer comparison will appear after the market cache refreshes.</td></tr>{% endfor %}</tbody>
+        </table></div>
+    </article>
+
+    <article class="stock-news-panel panel">
+        <header><span>Company monitor</span><h2>Latest News</h2></header>
+        <ul data-stock-page-news>{% for item in stock.detail.news %}<li><a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a><small>{{ item.source }}{% if item.published %} &middot; {{ item.published }}{% endif %}</small></li>{% else %}<li class="unavailable">Refreshing stock-specific headlines...</li>{% endfor %}</ul>
+    </article>
+
+    <article class="stock-ai-panel panel">
+        <div class="ai-panel-intro"><span>AI research desk</span><h2>Grounded stock analysis</h2><p>Combines the cached trend, accumulation, valuation, ownership, sector peers, NIFTY context and latest company news. It will not invent unavailable facts.</p></div>
+        <button type="button" data-stock-ai data-symbol="{{ stock.symbol }}">AI Analyse {{ stock.symbol }}</button>
+        <small>Educational analysis only. Results are cached to keep the page fast.</small>
+        <div class="ai-analysis-result" data-stock-ai-result hidden></div>
+    </article>
+</section>
+
+<script id="stock-page-data" type="application/json">{{ stock_json|tojson }}</script>
+{% endblock %}
+
+{% block scripts %}<script defer src="{{ url_for('static', filename='js/stock_analysis.js', v='20260717-5') }}"></script>{% endblock %}

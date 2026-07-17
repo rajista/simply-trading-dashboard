@@ -9,6 +9,7 @@ from stocks import STOCKS
 from app import (
     IST,
     _CACHE,
+    _filter_company_news,
     _parse_stock_news_rss,
     app,
     build_breadth,
@@ -21,6 +22,7 @@ from app import (
     build_sector_performance,
     build_stock_hover_data_with_details,
     build_stock_rows,
+    build_rules_stock_analysis,
     compute_obv_divergence,
     compute_quiet_pullback,
     compute_volume_range_signal,
@@ -70,12 +72,22 @@ SAMPLE_MARKET = {
     "gainers": [],
     "losers": [],
     "active": [],
+    "turnover": [],
+    "volume_leaders": [],
+    "unusual_volume": [],
+    "breakouts": [],
+    "contribution_leaders": [],
+    "contribution_drags": [],
     "signals": [],
     "sectors": [{
         "name": "Technology",
         "stocks": 1,
         "advancers": 1,
         "percent": 1.0,
+        "median_percent": 1.0,
+        "weighted_percent": 1.0,
+        "month_change": 1.0,
+        "traded_value": 320_000_000,
         "volume": 100_000,
         "leader": {"display_symbol": "TCS", "percent": 1.0},
         "laggard": {"display_symbol": "TCS", "percent": 1.0},
@@ -84,16 +96,25 @@ SAMPLE_MARKET = {
             "name": "Tata Consultancy Services",
             "price": 3200.0,
             "percent": 1.0,
+            "month_change": 1.0,
+            "relative_volume": 1.1,
+            "traded_value": 320_000_000,
+            "sector_rank": 1,
             "volume": 100_000,
             "signal": "Uptrend",
         }],
     }],
     "heatmap": [],
+    "market_gauges": [],
+    "sector_rotation": [],
+    "breadth_history": [],
+    "breadth_divergence": {"tone": "neutral", "label": "Breadth unavailable", "detail": "Waiting for a complete market snapshot."},
     "hover_data": {},
     "impact_available": False,
     "market_stats": {
         "tracked": 0, "priced": 0, "advance_ratio": 0,
-        "average_change": None, "total_volume": 0, "total_market_cap": 0,
+        "average_change": None, "total_volume": 0, "total_traded_value": 0,
+        "free_float_market_cap": 0, "free_float_coverage": 0,
     },
     "internals": {
         "above_sma50": 0, "above_sma200": 0, "near_high": 0, "volume_surge": 0,
@@ -104,6 +125,7 @@ SAMPLE_MARKET = {
         "leadership": [],
         "participation": [],
     },
+    "dashboard_notes": [],
 }
 
 
@@ -255,6 +277,21 @@ class DataModelTests(unittest.TestCase):
         self.assertTrue(
             all(cell["width"] > 0 and cell["height"] > 0 for group in heatmap for cell in group["cells"])
         )
+
+    def test_heatmap_readability_floor_preserves_impact_order(self):
+        rows = [
+            {"sector": "Technology", "display_symbol": "LEADER", "percent": 2.0,
+             "market_cap": 1_000, "volume": 1, "nifty_impact": 1.0},
+            {"sector": "Technology", "display_symbol": "MID", "percent": 1.0,
+             "market_cap": 500, "volume": 1, "nifty_impact": 0.1},
+            {"sector": "Technology", "display_symbol": "SMALL", "percent": -0.1,
+             "market_cap": 100, "volume": 1, "nifty_impact": -0.001},
+        ]
+        cells = build_heatmap(rows)[0]["cells"]
+        areas = [cell["width"] * cell["height"] for cell in cells]
+        self.assertGreater(areas[0], areas[1])
+        self.assertGreater(areas[1], areas[2])
+        self.assertGreater(areas[2], 1000)
 
     def test_nse_snapshot_hydrates_live_quote_fields(self):
         rows = [{
@@ -544,8 +581,8 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Nearby Events", html)
         self.assertIn("Upcoming Earnings Release", html)
         self.assertIn("Simply Trading", html)
-        self.assertIn("/static/css/style.css?v=20260628-1", html)
-        self.assertIn("/static/js/dashboard.js?v=20260628-1", html)
+        self.assertIn("/static/css/style.css?v=20260717-5", html)
+        self.assertIn("/static/js/dashboard.js?v=20260717-5", html)
         self.assertIn("AI Option Chain Analysis", html)
         self.assertIn("Analyse Options", html)
         self.assertIn("FII / DII Cash Activity", html)
@@ -553,7 +590,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Dashboard notes will appear", html)
         self.assertIn("Operating Margin", html)
         self.assertIn("Retail", html)
-        self.assertIn("Shareholding / change", html)
+        self.assertIn("Shareholding / latest available change", html)
         self.assertIn("Latest News", html)
         self.assertIn("NIFTY 500", html)
         self.assertIn("sector-toggle", html)
@@ -693,9 +730,30 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(parsed[0]["source"], "Yahoo")
         self.assertIn("https://example.com/infy", parsed[0]["url"])
 
-    @patch("app._fallback_stock_news_from_market_headlines", return_value=[{"title": "MSUMI update", "url": "https://example.com", "source": "Market", "published": ""}])
+    def test_company_news_filter_rejects_generic_unrelated_items(self):
+        items = [
+            {"title": "Apple becomes the world's most valuable company", "url": "https://example.com/apple"},
+            {"title": "National Aluminium shares rise after results", "url": "https://example.com/nalco"},
+        ]
+        filtered = _filter_company_news(items, "NATIONALUM", "National Aluminium Company Limited")
+        self.assertEqual([item["url"] for item in filtered], ["https://example.com/nalco"])
+
+    def test_rules_stock_analysis_uses_cached_evidence(self):
+        context = {
+            "symbol": "INFY",
+            "row": {"signal": "Uptrend", "accumulation_score": 2, "sector_relative_change": 1.1,
+                    "sector": "Information Technology", "sector_rank": 1, "sector_stock_count": 10},
+            "detail": {"roe": 30.0, "debt_equity": 0.1, "pe_ratio": 25.0},
+            "performance": {"five_day": 3.0, "year": 18.0},
+            "peers": [{"pe_ratio": 30.0}, {"pe_ratio": 20.0}],
+        }
+        analysis = build_rules_stock_analysis(context)
+        self.assertEqual(analysis["verdict"], "Constructive")
+        self.assertIn("25.0x", analysis["valuation_view"])
+
+    @patch("app.fetch_stock_news", return_value=[{"title": "MSUMI update", "url": "https://example.com", "source": "Market", "published": ""}])
     @patch("app.fetch_stock_detail", return_value={})
-    def test_stock_detail_fallback_never_returns_blank(self, fetch_detail, fallback_news):
+    def test_stock_detail_fallback_never_returns_blank(self, fetch_detail, stock_news):
         _CACHE.clear()
         detail = self.client.get("/api/stocks/MSUMI").get_json()
         self.assertEqual(detail["symbol"], "MSUMI")
