@@ -552,8 +552,8 @@
 
     const load = () => {
         if (!dataPromise) {
-            dataPromise = fetch("/api/fii-dii-insights?v=20260717-7", {
-                cache: "no-cache",
+            dataPromise = fetch(`/api/fii-dii-insights?v=20260717-8&t=${Date.now()}`, {
+                cache: "no-store",
                 headers: {"Accept": "application/json"},
             })
                 .then((response) => response.ok ? response.json() : Promise.reject(new Error("Unavailable")))

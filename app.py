@@ -4443,7 +4443,7 @@ def fii_dii_insights_api():
         }
     )
     response = jsonify(_json_safe(payload))
-    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=21600"
+    response.headers["Cache-Control"] = "no-store"
     response.add_etag()
     return response.make_conditional(request)
 
