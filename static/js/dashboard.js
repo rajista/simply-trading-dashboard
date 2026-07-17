@@ -552,7 +552,10 @@
 
     const load = () => {
         if (!dataPromise) {
-            dataPromise = fetch("/api/fii-dii-insights", {headers: {"Accept": "application/json"}})
+            dataPromise = fetch("/api/fii-dii-insights?v=20260717-7", {
+                cache: "no-cache",
+                headers: {"Accept": "application/json"},
+            })
                 .then((response) => response.ok ? response.json() : Promise.reject(new Error("Unavailable")))
                 .then((payload) => { render(payload); return payload; })
                 .catch(() => {
