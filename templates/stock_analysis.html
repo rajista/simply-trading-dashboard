@@ -33,8 +33,8 @@
         </svg>{% else %}<div class="stock-chart-unavailable">Price history is warming. The remaining cached analysis is available below.</div>{% endif %}
         <div class="stock-comparison-grid">
             <div><span>{{ stock.symbol }} today</span><b class="{{ 'positive' if stock.performance.day is not none and stock.performance.day >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.performance.day) if stock.performance.day is not none else "-" }}</b></div>
-            <div><span>NIFTY 50 today</span><b class="{{ 'positive' if stock.benchmark.percent is defined and stock.benchmark.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.benchmark.percent) if stock.benchmark.percent is defined and stock.benchmark.percent is not none else "-" }}</b></div>
-            <div><span>Sector average</span><b class="{{ 'positive' if stock.sector_summary.percent is defined and stock.sector_summary.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.sector_summary.percent) if stock.sector_summary.percent is defined and stock.sector_summary.percent is not none else "-" }}</b></div>
+            <div><span>NIFTY 50 today</span><b class="{{ 'positive' if stock.benchmark.percent is defined and stock.benchmark.percent is not none and stock.benchmark.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.benchmark.percent) if stock.benchmark.percent is defined and stock.benchmark.percent is not none else "-" }}</b></div>
+            <div><span>Sector average</span><b class="{{ 'positive' if stock.sector_summary.percent is defined and stock.sector_summary.percent is not none and stock.sector_summary.percent >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.sector_summary.percent) if stock.sector_summary.percent is defined and stock.sector_summary.percent is not none else "-" }}</b></div>
             <div><span>NIFTY 500 average</span><b class="{{ 'positive' if stock.market_average is not none and stock.market_average >= 0 else 'negative' }}">{{ "%+.2f%%"|format(stock.market_average) if stock.market_average is not none else "-" }}</b></div>
         </div>
     </article>

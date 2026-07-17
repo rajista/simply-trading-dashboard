@@ -4337,7 +4337,7 @@ def blog_redirect():
 
 @app.route("/stock/<symbol>")
 def stock_analysis_page(symbol):
-    context = build_stock_page_context(symbol)
+    context = _json_safe(build_stock_page_context(symbol))
     return render_template(
         "stock_analysis.html",
         **common_context("stock", True),

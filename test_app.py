@@ -794,6 +794,32 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["symbol"], "TCS")
 
+    @patch("app.build_stock_page_context")
+    def test_stock_analysis_page_handles_unavailable_benchmark(self, context_builder):
+        import app as app_module
+        context_builder.return_value = {
+            "symbol": "INFY",
+            "row": {
+                "display_symbol": "INFY", "name": "Infosys", "sector": "Information Technology",
+                "price": 1000, "percent": 1.0, "volume": None, "traded_value": None,
+                "relative_volume": None, "day_open": None, "day_high": None, "day_low": None,
+                "signal": None, "accumulation_score": 0, "sector_rank": None,
+                "sector_stock_count": None, "high52_distance": None, "chart_series": [],
+            },
+            "detail": app_module._fallback_stock_detail("INFY", {"name": "Infosys", "news": []}),
+            "performance": {"day": 1.0, "five_day": None, "month": None, "three_month": None,
+                            "year": None, "five_year": None},
+            "peers": [],
+            "benchmark": {"name": "NIFTY 50", "percent": None},
+            "sector_summary": {"percent": None},
+            "market_average": None,
+            "market_timestamp": None,
+            "stale": True,
+        }
+        response = self.client.get("/stock/INFY")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("AI Analyse INFY", response.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()
