@@ -20,7 +20,7 @@ import time as time_module
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
 
-from flask import Flask, jsonify, redirect, render_template, request
+from flask import Flask, jsonify, make_response, redirect, render_template, request
 import pandas as pd
 import requests
 import yfinance as yf
@@ -251,6 +251,9 @@ ARTICLE_POSTS_SOURCE = [
     },
 ]
 MARKET_CACHE_TTL = int(os.getenv("MARKET_CACHE_TTL_SECONDS", "1200"))
+MARKET_HARD_REFRESH_AFTER = int(
+    os.getenv("MARKET_HARD_REFRESH_AFTER_SECONDS", str(max(3600, MARKET_CACHE_TTL * 3)))
+)
 HISTORY_CACHE_TTL = int(os.getenv("HISTORY_CACHE_TTL_SECONDS", "21600"))
 NEWS_CACHE_TTL = 900
 CALENDAR_CACHE_TTL = 21600
@@ -473,12 +476,23 @@ def fetch_nse_index_snapshot(api_url, index_name):
             f"live-equity-market?symbol={quote(index_name)}"
         ),
     }
-    with requests.Session() as session:
-        session.headers.update(headers)
-        session.get(NSE_HOME_URL, timeout=10).raise_for_status()
-        response = session.get(api_url, timeout=15)
-        response.raise_for_status()
-        payload = response.json()
+    last_error = None
+    timeout = 30 if "NIFTY%20500" in api_url or "NIFTY%2050" in api_url else 15
+    for attempt in range(3):
+        try:
+            with requests.Session() as session:
+                session.headers.update(headers)
+                session.get(NSE_HOME_URL, timeout=12).raise_for_status()
+                response = session.get(api_url, timeout=timeout)
+                response.raise_for_status()
+                payload = response.json()
+            break
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            if attempt < 2:
+                time_module.sleep(0.8 * (attempt + 1))
+    else:
+        raise last_error or RuntimeError(f"NSE {index_name} snapshot failed")
     rows = payload.get("data")
     if not isinstance(rows, list):
         raise ValueError(f"NSE {index_name} response has no data rows")
@@ -825,8 +839,8 @@ def _refresh_cached_value(key, ttl, loader):
                 "expires": time_module.time() + ttl,
             }
         _write_persistent_cache(key, data, ttl)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"Cache refresh failed for {key}: {exc}", file=sys.stderr)
     finally:
         with _CACHE_LOCK:
             _CACHE_REFRESHING.discard(key)
@@ -874,6 +888,48 @@ def get_cached_swr(key, ttl, loader, now=None, cold_async=False):
             ).start()
         return None, False
     return get_cached(key, ttl, loader, now=now)
+
+
+def _parse_ist_timestamp(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M IST", "%Y-%m-%d %H:%M:%S", "%d-%b-%Y %H:%M:%S"):
+        try:
+            parsed = datetime.strptime(text.removesuffix(" IST").strip(), fmt.removesuffix(" IST"))
+            return parsed.replace(tzinfo=IST)
+        except ValueError:
+            continue
+    try:
+        parsed = pd.to_datetime(text, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        if parsed.tzinfo is None:
+            return parsed.to_pydatetime().replace(tzinfo=IST)
+        return parsed.to_pydatetime().astimezone(IST)
+    except Exception:
+        return None
+
+
+def market_cache_age_seconds(market, now=None):
+    if not isinstance(market, dict):
+        return None
+    stamp = _parse_ist_timestamp(market.get("refreshed_at")) or _parse_ist_timestamp(
+        market.get("data_timestamp")
+    )
+    if stamp is None:
+        return None
+    now = now or datetime.now(IST)
+    return max(0, (now - stamp).total_seconds())
+
+
+def should_force_market_refresh(market, stale, now=None):
+    if not stale:
+        return False
+    age = market_cache_age_seconds(market, now=now)
+    if age is None:
+        return True
+    return age >= MARKET_HARD_REFRESH_AFTER
 
 
 def _parse_number(value):
@@ -3224,16 +3280,22 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
     rows_by_symbol = {row["symbol"]: row for row in all_rows}
     rows = [rows_by_symbol[stock["symbol"]] for stock in stocks if stock["symbol"] in rows_by_symbol]
     broad_rows = [rows_by_symbol[stock["symbol"]] for stock in broad_stocks if stock["symbol"] in rows_by_symbol]
-    broad_snapshot = fetch_nse_nifty500_snapshot()
-    snapshot_timestamp = next(
-        (
-            item.get("lastUpdateTime")
-            for item in broad_snapshot
-            if str(item.get("symbol") or "").upper() in {"NIFTY 500", "NIFTY500"}
-        ),
-        None,
-    )
-    apply_nse_quote_snapshot(broad_rows, broad_snapshot)
+    broad_snapshot = []
+    snapshot_timestamp = None
+    nse_snapshot_error = None
+    try:
+        broad_snapshot = fetch_nse_nifty500_snapshot()
+        snapshot_timestamp = next(
+            (
+                item.get("lastUpdateTime")
+                for item in broad_snapshot
+                if str(item.get("symbol") or "").upper() in {"NIFTY 500", "NIFTY500"}
+            ),
+            None,
+        )
+        apply_nse_quote_snapshot(broad_rows, broad_snapshot)
+    except Exception as exc:
+        nse_snapshot_error = f"NIFTY 500 snapshot unavailable: {exc}"
     update_live_row_metrics(broad_rows)
     impact_available = False
     try:
@@ -3330,6 +3392,7 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
         "breadth_divergence": build_breadth_divergence(broad_rows, rows),
         "data_timestamp": snapshot_timestamp,
         "refreshed_at": datetime.now(IST).strftime("%Y-%m-%d %H:%M IST"),
+        "refresh_warning": nse_snapshot_error,
     }
 
 
@@ -4554,8 +4617,8 @@ def _market_refresh_loop():
     while True:
         try:
             refresh_market_dashboard_cache()
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"Market dashboard scheduled refresh failed: {exc}", file=sys.stderr)
         time_module.sleep(max(60, MARKET_CACHE_TTL))
 
 
@@ -4587,12 +4650,21 @@ def load_cached_market_context():
         ),
         cold_async=True,
     )
+    market_refresh_error = None
+    if should_force_market_refresh(market, market_stale):
+        try:
+            market = refresh_market_dashboard_cache()
+            market_stale = False
+        except Exception as exc:
+            market_refresh_error = str(exc)
+            print(f"Forced market dashboard refresh failed: {exc}", file=sys.stderr)
     return {
         "stocks": stocks,
         "broad_stocks": broad_stocks,
         "universe_key": universe_key,
         "market": market or empty_market_dashboard(),
         "market_stale": market_stale,
+        "market_refresh_error": market_refresh_error,
         "constituents_stale": constituents_stale or broad_constituents_stale,
     }
 
@@ -4729,7 +4801,7 @@ def dashboard():
         if leading_index
         else "Indian market data is temporarily unavailable. Cached panels will return automatically."
     )
-    return render_template(
+    response = make_response(render_template(
         "dashboard.html",
         **common_context("home", True),
         market=market,
@@ -4750,7 +4822,11 @@ def dashboard():
         format_market_cap=format_market_cap,
         format_volume=format_volume,
         format_crore_value=format_crore_value,
-    )
+    ))
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/insights")
@@ -4763,7 +4839,7 @@ def insights():
     insight_data = (snapshot.get("insights") if snapshot else None) or empty_insights_data()
     market = {"hover_data": snapshot.get("hover_data", {}) if snapshot else {}}
     snapshot_status = snapshot.get("status", "ready") if snapshot else "warming"
-    return render_template(
+    response = make_response(render_template(
         "insights.html",
         **common_context("insights", False),
         market=market,
@@ -4777,7 +4853,11 @@ def insights():
         constituents_stale=bool(snapshot.get("constituents_stale")) if snapshot else False,
         format_market_cap=format_market_cap,
         format_volume=format_volume,
-    )
+    ))
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/screener")
