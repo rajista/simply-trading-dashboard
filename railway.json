@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "CACHE_RAW_HISTORY_DATAFRAMES=0 DISABLE_STARTUP_STOCK_DETAIL_REFRESH=1 STOCK_DETAIL_WORKERS=2 DASHBOARD_CHART_SERIES_POINTS=24 gunicorn --workers 1 --threads 4 --timeout 180 --bind 0.0.0.0:$PORT app:app",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}

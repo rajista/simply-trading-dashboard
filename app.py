@@ -255,6 +255,8 @@ MARKET_HARD_REFRESH_AFTER = int(
     os.getenv("MARKET_HARD_REFRESH_AFTER_SECONDS", str(max(3600, MARKET_CACHE_TTL * 3)))
 )
 HISTORY_CACHE_TTL = int(os.getenv("HISTORY_CACHE_TTL_SECONDS", "21600"))
+CACHE_RAW_HISTORY_DATAFRAMES = os.getenv("CACHE_RAW_HISTORY_DATAFRAMES") == "1"
+DASHBOARD_CHART_SERIES_POINTS = int(os.getenv("DASHBOARD_CHART_SERIES_POINTS", "30"))
 NEWS_CACHE_TTL = 900
 CALENDAR_CACHE_TTL = 21600
 CONSTITUENT_CACHE_TTL = 86400
@@ -272,7 +274,7 @@ STOCK_POPUP_DETAILS_LATEST_KEY = "stock_popup_details:latest"
 INSIGHTS_SNAPSHOT_KEY = "insights_snapshot:latest"
 MARKET_BREADTH_HISTORY_KEY = "market_breadth_history"
 FII_DII_HISTORY_KEY = "fii_dii_history"
-MAX_ASYNC_POPUP_DETAIL_PREFETCH = 75
+MAX_ASYNC_POPUP_DETAIL_PREFETCH = int(os.getenv("MAX_ASYNC_POPUP_DETAIL_PREFETCH", "50"))
 STOCK_DETAIL_WORKERS = int(os.getenv("STOCK_DETAIL_WORKERS", "3"))
 STARTUP_MARKET_REFRESH_DELAY = int(os.getenv("STARTUP_MARKET_REFRESH_DELAY_SECONDS", "10"))
 STARTUP_STOCK_DETAIL_REFRESH_DELAY = int(os.getenv("STARTUP_STOCK_DETAIL_REFRESH_DELAY_SECONDS", "300"))
@@ -293,6 +295,19 @@ _BULK_BLOCK_REFRESH_STARTED = False
 _STOCK_DETAIL_REFRESH_STARTED = False
 _MARKET_REFRESH_STARTED = False
 _INSIGHTS_SNAPSHOT_REFRESH_STARTED = False
+
+
+def _cache_is_raw_history(key):
+    return str(key).startswith(("stock_history:", "index_history:"))
+
+
+def _prune_memory_cache_locked(now=None):
+    for key, entry in list(_CACHE.items()):
+        if not isinstance(entry, dict):
+            _CACHE.pop(key, None)
+            continue
+        if not CACHE_RAW_HISTORY_DATAFRAMES and _cache_is_raw_history(key):
+            _CACHE.pop(key, None)
 
 
 def _cache_file_path(key):
@@ -804,6 +819,7 @@ def get_market_status(now=None):
 def get_cached(key, ttl, loader, now=None):
     current = time_module.time() if now is None else now
     with _CACHE_LOCK:
+        _prune_memory_cache_locked(current)
         cached = _CACHE.get(key)
         if cached and cached["expires"] > current:
             return cached["data"], False
@@ -820,6 +836,7 @@ def get_cached(key, ttl, loader, now=None):
             raise ValueError("Loader returned no data")
         with _CACHE_LOCK:
             _CACHE[key] = {"data": data, "expires": current + ttl}
+            _prune_memory_cache_locked(current)
         _write_persistent_cache(key, data, ttl)
         return data, False
     except Exception:
@@ -838,6 +855,7 @@ def _refresh_cached_value(key, ttl, loader):
                 "data": data,
                 "expires": time_module.time() + ttl,
             }
+            _prune_memory_cache_locked()
         _write_persistent_cache(key, data, ttl)
     except Exception as exc:
         print(f"Cache refresh failed for {key}: {exc}", file=sys.stderr)
@@ -851,6 +869,7 @@ def get_cached_swr(key, ttl, loader, now=None, cold_async=False):
     current = time_module.time() if now is None else now
     should_refresh = False
     with _CACHE_LOCK:
+        _prune_memory_cache_locked(current)
         cached = _CACHE.get(key)
         if cached and cached["expires"] > current:
             return cached["data"], False
@@ -1380,7 +1399,7 @@ def build_stock_rows(quotes, history, stocks):
                 ),
                 "chart_series": [
                     round(float(value), 2)
-                    for value in closes.tail(60).tolist()
+                    for value in closes.tail(DASHBOARD_CHART_SERIES_POINTS).tolist()
                     if not pd.isna(value)
                 ],
                 "market_cap": quote.get("market_cap"),
@@ -2131,7 +2150,7 @@ def refresh_insights_snapshot(deal_data=None, market=None, stale=False, error=No
     snapshot = {
         "status": "ready",
         "insights": insight_data,
-        "hover_data": build_stock_hover_data_with_details(rows, popup_details),
+        "hover_data": build_compact_insights_hover_data(rows, insight_data),
         "deal_meta": insight_data.get("deal_meta", {}),
         "created_at": created_at,
         "refreshed_at": created_at,
@@ -2775,14 +2794,11 @@ def refresh_stock_popup_details_cache():
     data = fetch_all_stock_popup_details(stocks)
     key = f"stock_popup_details:{','.join(stock['symbol'] for stock in stocks)}"
     with _CACHE_LOCK:
-        _CACHE[key] = {
-            "data": data,
-            "expires": time_module.time() + STOCK_DETAIL_CACHE_TTL,
-        }
         _CACHE[STOCK_POPUP_DETAILS_LATEST_KEY] = {
             "data": data,
             "expires": time_module.time() + STOCK_DETAIL_CACHE_TTL,
         }
+        _prune_memory_cache_locked()
     _write_persistent_cache(key, data, STOCK_DETAIL_CACHE_TTL)
     _write_persistent_cache(STOCK_POPUP_DETAILS_LATEST_KEY, data, STOCK_DETAIL_CACHE_TTL)
     return data
@@ -3126,6 +3142,33 @@ def build_insights(rows, deal_data=None, details=None):
     }
 
 
+def build_compact_insights_hover_data(rows, insight_data, limit=80):
+    wanted = []
+    for key in (
+        "ranked",
+        "high_conviction",
+        "bulk_buy_leaders",
+        "bulk_sell_leaders",
+        "short_pressure",
+    ):
+        for row in insight_data.get(key, []) if isinstance(insight_data, dict) else []:
+            symbol = row.get("display_symbol") or row.get("symbol")
+            if symbol:
+                wanted.append(_normalize_symbol(symbol))
+    wanted_symbols = set(wanted[:limit])
+    if not wanted_symbols:
+        wanted_symbols = {
+            _normalize_symbol(row.get("display_symbol") or row.get("symbol"))
+            for row in rows[:limit]
+        }
+    compact_rows = [
+        row
+        for row in rows
+        if _normalize_symbol(row.get("display_symbol") or row.get("symbol")) in wanted_symbols
+    ]
+    return build_stock_hover_data_with_details(compact_rows, {})
+
+
 def _growth_from_closes(closes, sessions):
     if closes is None or len(closes) <= sessions:
         return None
@@ -3257,11 +3300,14 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
     all_stocks = merge_stock_lists(stocks, broad_stocks)
     quotes, _ = get_market_quotes(stocks)
     quotes = quotes or {}
-    index_history, _ = get_cached_swr(
-        "index_history:5d:15m",
-        MARKET_CACHE_TTL,
-        fetch_index_history,
-    )
+    if CACHE_RAW_HISTORY_DATAFRAMES:
+        index_history, _ = get_cached_swr(
+            "index_history:5d:15m",
+            MARKET_CACHE_TTL,
+            fetch_index_history,
+        )
+    else:
+        index_history = fetch_index_history()
     index_history = index_history if isinstance(index_history, pd.DataFrame) else pd.DataFrame()
     nse_index_cards = {}
     nse_snapshot = None
@@ -3269,12 +3315,15 @@ def load_market_dashboard(stocks, broad_stocks=None, allow_impact_fallback=False
         nse_index_cards, nse_snapshot = fetch_nse_index_cards()
     except Exception:
         nse_index_cards, nse_snapshot = {}, None
-    history_key = "stock_history:1y:1d:" + ",".join(stock["symbol"] for stock in all_stocks)
-    stock_history, _ = get_cached_swr(
-        history_key,
-        HISTORY_CACHE_TTL,
-        lambda: fetch_stock_history(all_stocks),
-    )
+    if CACHE_RAW_HISTORY_DATAFRAMES:
+        history_key = "stock_history:1y:1d:" + ",".join(stock["symbol"] for stock in all_stocks)
+        stock_history, _ = get_cached_swr(
+            history_key,
+            HISTORY_CACHE_TTL,
+            lambda: fetch_stock_history(all_stocks),
+        )
+    else:
+        stock_history = fetch_stock_history(all_stocks)
     stock_history = stock_history if isinstance(stock_history, pd.DataFrame) else pd.DataFrame()
     all_rows = build_stock_rows(quotes, stock_history, all_stocks)
     rows_by_symbol = {row["symbol"]: row for row in all_rows}
