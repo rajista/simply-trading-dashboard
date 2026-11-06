@@ -1,5 +1,6 @@
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import copy
 import csv
 from datetime import date, datetime, time, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -281,6 +282,8 @@ STARTUP_STOCK_DETAIL_REFRESH_DELAY = int(os.getenv("STARTUP_STOCK_DETAIL_REFRESH
 STARTUP_INSIGHTS_SNAPSHOT_REFRESH_DELAY = int(
     os.getenv("STARTUP_INSIGHTS_SNAPSHOT_REFRESH_DELAY_SECONDS", "45")
 )
+EOD_REFRESH_HOUR = int(os.getenv("EOD_REFRESH_HOUR", "18"))
+EOD_REFRESH_MINUTE = int(os.getenv("EOD_REFRESH_MINUTE", "30"))
 REPORTED_FINANCIAL_OVERRIDES = {
     "INFY": {
         "period": "2026-03-31",
@@ -1265,6 +1268,43 @@ def market_session_progress(now=None):
     return max(0.08, min(elapsed / duration, 1.0))
 
 
+def is_nse_trading_weekday(now=None):
+    current = now or datetime.now(IST)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=IST)
+    return current.astimezone(IST).weekday() < 5
+
+
+def is_nse_live_refresh_window(now=None):
+    """True only while a live NSE dashboard refresh is useful.
+
+    The calendar deliberately excludes exchange holidays because this app does not
+    maintain a holiday feed. On a holiday, NSE snapshots simply retain the last
+    trading session's values instead of triggering the expensive daily analysis.
+    """
+    current = now or datetime.now(IST)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=IST)
+    current = current.astimezone(IST)
+    return (
+        current.weekday() < 5
+        and time(9, 15) <= current.time() <= time(15, 45)
+    )
+
+
+def seconds_until_next_ist_weekday_time(hour, minute, now=None):
+    current = now or datetime.now(IST)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=IST)
+    current = current.astimezone(IST)
+    target = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if current >= target:
+        target += timedelta(days=1)
+    while target.weekday() >= 5:
+        target += timedelta(days=1)
+    return max(1, int((target - current).total_seconds()))
+
+
 def update_live_row_metrics(rows, now=None):
     progress = market_session_progress(now)
     for row in rows:
@@ -2163,10 +2203,13 @@ def refresh_insights_snapshot(deal_data=None, market=None, stale=False, error=No
     return store_insights_snapshot(snapshot)
 
 
-def refresh_daily_insights_snapshot():
+def refresh_daily_insights_snapshot(deal_data=None, market=None):
     try:
-        deal_data = refresh_bulk_block_short_cache_from_nse()
-        return refresh_insights_snapshot(deal_data=deal_data)
+        deal_data = deal_data if deal_data is not None else refresh_bulk_block_short_cache_from_nse()
+        kwargs = {"deal_data": deal_data}
+        if market is not None:
+            kwargs["market"] = market
+        return refresh_insights_snapshot(**kwargs)
     except Exception as exc:
         previous = get_cached_insights_snapshot()
         if previous:
@@ -2220,13 +2263,39 @@ def seconds_until_next_ist_midnight(now=None):
     return max(1, int((next_midnight - current).total_seconds()))
 
 
+def refresh_fii_dii_cache():
+    """Fetch the daily institutional-flow report once after the market closes."""
+    data = fetch_fii_dii_activity()
+    with _CACHE_LOCK:
+        _CACHE["fii_dii"] = {
+            "data": data,
+            "expires": time_module.time() + FII_DII_HISTORY_CACHE_TTL,
+        }
+    _write_persistent_cache("fii_dii", data, FII_DII_HISTORY_CACHE_TTL)
+    return data
+
+
+def refresh_end_of_day_data():
+    """Build one complete weekday snapshot after final NSE reports are available."""
+    market = refresh_market_dashboard_cache(full_analysis=True)
+    refresh_stock_popup_details_cache()
+    deal_data = refresh_bulk_block_short_cache_from_nse()
+    try:
+        refresh_fii_dii_cache()
+    except Exception as exc:
+        print(f"FII/DII end-of-day refresh failed: {exc}", file=sys.stderr)
+    return refresh_daily_insights_snapshot(deal_data=deal_data, market=market)
+
+
 def _bulk_block_refresh_loop():
     while True:
-        time_module.sleep(seconds_until_next_ist_midnight())
+        time_module.sleep(
+            seconds_until_next_ist_weekday_time(EOD_REFRESH_HOUR, EOD_REFRESH_MINUTE)
+        )
         try:
-            refresh_daily_insights_snapshot()
-        except Exception:
-            pass
+            refresh_end_of_day_data()
+        except Exception as exc:
+            print(f"End-of-day refresh failed: {exc}", file=sys.stderr)
 
 
 def start_bulk_block_refresh_scheduler():
@@ -2237,7 +2306,7 @@ def start_bulk_block_refresh_scheduler():
     threading.Thread(
         target=_bulk_block_refresh_loop,
         daemon=True,
-        name="bulk-block-short-midnight-refresh",
+        name="weekday-end-of-day-refresh",
     ).start()
 
 
@@ -2248,12 +2317,9 @@ def start_insights_snapshot_refresh_scheduler():
         or os.getenv("DISABLE_INSIGHTS_SNAPSHOT_REFRESH") == "1"
     ):
         return
+    # Insights is prepared by the coordinated weekday end-of-day job. Starting
+    # a second refresh on every deploy used to duplicate the largest workload.
     _INSIGHTS_SNAPSHOT_REFRESH_STARTED = True
-    snapshot = get_cached_insights_snapshot()
-    if insights_snapshot_needs_nse_refresh(snapshot):
-        ensure_insights_snapshot_refresh_async(
-            delay=max(0, STARTUP_INSIGHTS_SNAPSHOT_REFRESH_DELAY)
-        )
 
 
 def get_bulk_block_short_data():
@@ -2805,18 +2871,9 @@ def refresh_stock_popup_details_cache():
 
 
 def _stock_detail_refresh_loop():
-    if os.getenv("DISABLE_STARTUP_STOCK_DETAIL_REFRESH") != "1":
-        time_module.sleep(max(0, STARTUP_STOCK_DETAIL_REFRESH_DELAY))
-        try:
-            refresh_stock_popup_details_cache()
-        except Exception:
-            pass
-    while True:
-        time_module.sleep(seconds_until_next_ist_midnight() + 900)
-        try:
-            refresh_stock_popup_details_cache()
-        except Exception:
-            pass
+    # Retained for backward compatibility with callers. Popup data is refreshed
+    # by refresh_end_of_day_data() so it cannot overlap the market/Insights job.
+    return None
 
 
 def start_stock_detail_refresh_scheduler():
@@ -2824,11 +2881,6 @@ def start_stock_detail_refresh_scheduler():
     if _STOCK_DETAIL_REFRESH_STARTED or os.getenv("DISABLE_STOCK_DETAIL_REFRESH") == "1":
         return
     _STOCK_DETAIL_REFRESH_STARTED = True
-    threading.Thread(
-        target=_stock_detail_refresh_loop,
-        daemon=True,
-        name="stock-detail-daily-refresh",
-    ).start()
 
 
 def _sum_side(frame, side, column="value"):
@@ -4533,11 +4585,14 @@ def stock_details_snapshot_api():
 
 @app.route("/api/fii-dii-insights")
 def fii_dii_insights_api():
-    current, current_stale = get_cached_swr(
-        "fii_dii",
-        MARKET_CACHE_TTL,
-        fetch_fii_dii_activity,
-    )
+    if is_nse_live_refresh_window():
+        current, current_stale = get_cached_swr(
+            "fii_dii",
+            MARKET_CACHE_TTL,
+            fetch_fii_dii_activity,
+        )
+    else:
+        current, current_stale = _cached_value_without_refresh("fii_dii")
     stored_history = record_fii_dii_history(current or [])
     archive, archive_stale = get_cached_swr(
         "fii_dii_history_archive",
@@ -4580,7 +4635,6 @@ def stock_analysis_api(symbol):
 def insights_data_api():
     snapshot = _json_safe(get_cached_insights_snapshot())
     if not snapshot:
-        ensure_insights_snapshot_refresh_async()
         return jsonify(
             {
                 "status": "warming",
@@ -4590,8 +4644,6 @@ def insights_data_api():
                 "error": None,
             }
         )
-    if insights_snapshot_needs_nse_refresh(snapshot):
-        ensure_insights_snapshot_refresh_async()
     return jsonify(
         {
             "status": snapshot.get("status", "ready"),
@@ -4647,11 +4699,119 @@ def market_dashboard_cache_key(stocks, broad_stocks):
     return f"market:{universe_key}|broad:{broad_universe_key}", universe_key
 
 
-def refresh_market_dashboard_cache():
+def _cached_value_without_refresh(key):
+    """Return a cache entry even when expired, without starting a loader."""
+    with _CACHE_LOCK:
+        cached = _CACHE.get(key)
+    if not cached:
+        cached = _read_persistent_cache(key)
+        if cached:
+            with _CACHE_LOCK:
+                _CACHE[key] = cached
+    if not isinstance(cached, dict):
+        return None, True
+    return cached.get("data"), cached.get("expires", 0) <= time_module.time()
+
+
+def _refresh_dashboard_collections(data, nse_snapshot=None, snapshot_timestamp=None):
+    """Rebuild presentation lists from cached technical rows after a price-only refresh."""
+    broad_rows = data.get("rows") or []
+    rows = data.get("nifty50_rows") or []
+    available = [row for row in broad_rows if row.get("percent") is not None]
+    gainers = sorted(available, key=lambda row: row["percent"], reverse=True)
+    losers = sorted((row for row in available if row["percent"] < 0), key=lambda row: row["percent"])
+    active = sorted((row for row in broad_rows if row.get("volume") is not None), key=lambda row: row["volume"], reverse=True)
+    turnover = sorted((row for row in broad_rows if row.get("traded_value") is not None), key=lambda row: row["traded_value"], reverse=True)
+    contribution = [row for row in rows if row.get("nifty_impact") is not None]
+    sectors = build_sector_performance(broad_rows)
+    market_stats = build_market_stats(broad_rows)
+    breadth = build_breadth(broad_rows)
+    data.update(
+        {
+            "gainers": gainers[:14],
+            "losers": losers[:14],
+            "active": turnover[:14],
+            "turnover": turnover[:14],
+            "volume_leaders": active[:14],
+            "unusual_volume": sorted(
+                (row for row in broad_rows if row.get("relative_volume") is not None),
+                key=lambda row: row["relative_volume"], reverse=True,
+            )[:14],
+            "delivery_leaders": sorted(
+                (row for row in broad_rows if row.get("delivery_percent") is not None),
+                key=lambda row: row["delivery_percent"], reverse=True,
+            )[:10],
+            "breakouts": sorted(
+                (row for row in broad_rows if row.get("price_volume_breakout")),
+                key=lambda row: (row.get("relative_volume") or 0, row.get("percent") or 0), reverse=True,
+            )[:10],
+            "contribution_leaders": sorted(contribution, key=lambda row: row["nifty_impact"], reverse=True)[:6],
+            "contribution_drags": sorted(contribution, key=lambda row: row["nifty_impact"])[:6],
+            "signals": sorted(broad_rows, key=lambda row: abs(row.get("percent") or 0), reverse=True)[:18],
+            "sectors": sectors,
+            "sector_rotation": sorted(
+                (sector for sector in sectors if sector.get("month_change") is not None),
+                key=lambda sector: sector["month_change"], reverse=True,
+            ),
+            "heatmap": build_heatmap(rows),
+            "hover_data": build_stock_hover_data(broad_rows),
+            "market_stats": market_stats,
+            "breadth": breadth,
+            "breadth_history": record_market_breadth_history(breadth, market_stats),
+            "internals": build_market_internals(rows),
+            "insights": build_dashboard_insights(broad_rows, rows),
+            "dashboard_notes": build_dashboard_notes(broad_rows, rows),
+            "breadth_divergence": build_breadth_divergence(broad_rows, rows),
+            "impact_available": bool(contribution),
+            "data_timestamp": snapshot_timestamp or data.get("data_timestamp"),
+            "refreshed_at": datetime.now(IST).strftime("%Y-%m-%d %H:%M IST"),
+        }
+    )
+    return data
+
+
+def refresh_live_market_dashboard_cache(stocks, broad_stocks, key):
+    """Update live prices and charts without downloading a year of stock history."""
+    existing, _ = _cached_value_without_refresh(key)
+    if not isinstance(existing, dict) or not existing.get("rows"):
+        return refresh_market_dashboard_cache(full_analysis=True)
+    data = copy.deepcopy(existing)
+    broad_rows = data.get("rows") or []
+    nifty_rows = data.get("nifty50_rows") or []
+    index_history = fetch_index_history()
+    try:
+        index_cards, nifty_snapshot = fetch_nse_index_cards()
+    except Exception:
+        index_cards, nifty_snapshot = {}, []
+    try:
+        broad_snapshot = fetch_nse_nifty500_snapshot()
+        apply_nse_quote_snapshot(broad_rows, broad_snapshot)
+        snapshot_timestamp = next(
+            (item.get("lastUpdateTime") for item in broad_snapshot if str(item.get("symbol") or "").upper() in {"NIFTY 500", "NIFTY500"}),
+            None,
+        )
+    except Exception:
+        snapshot_timestamp = None
+    try:
+        nifty_snapshot = nifty_snapshot or fetch_nse_nifty50_snapshot()
+        apply_nse_quote_snapshot(nifty_rows, nifty_snapshot)
+        apply_nifty_impact(nifty_rows, nifty_snapshot)
+    except Exception:
+        pass
+    update_live_row_metrics(broad_rows)
+    data["indices"] = build_index_cards(index_history, index_cards) if isinstance(index_history, pd.DataFrame) else data.get("indices", [])
+    return _refresh_dashboard_collections(data, nifty_snapshot, snapshot_timestamp)
+
+
+def refresh_market_dashboard_cache(full_analysis=False):
     stocks, _ = get_stock_universe()
     broad_stocks, _ = get_nifty500_universe()
     key, _ = market_dashboard_cache_key(stocks, broad_stocks)
-    data = load_market_dashboard(stocks, broad_stocks, allow_impact_fallback=True)
+    data = (
+        load_market_dashboard(stocks, broad_stocks, allow_impact_fallback=True)
+        if full_analysis
+        else refresh_live_market_dashboard_cache(stocks, broad_stocks, key)
+    )
     with _CACHE_LOCK:
         _CACHE[key] = {
             "data": data,
@@ -4664,11 +4824,14 @@ def refresh_market_dashboard_cache():
 def _market_refresh_loop():
     time_module.sleep(max(0, STARTUP_MARKET_REFRESH_DELAY))
     while True:
-        try:
-            refresh_market_dashboard_cache()
-        except Exception as exc:
-            print(f"Market dashboard scheduled refresh failed: {exc}", file=sys.stderr)
-        time_module.sleep(max(60, MARKET_CACHE_TTL))
+        if is_nse_live_refresh_window():
+            try:
+                refresh_market_dashboard_cache()
+            except Exception as exc:
+                print(f"Live market refresh failed: {exc}", file=sys.stderr)
+            time_module.sleep(max(60, MARKET_CACHE_TTL))
+        else:
+            time_module.sleep(seconds_until_next_ist_weekday_time(9, 15))
 
 
 def start_market_refresh_scheduler():
@@ -4687,20 +4850,19 @@ def load_cached_market_context():
     stocks, constituents_stale = get_stock_universe()
     broad_stocks, broad_constituents_stale = get_nifty500_universe()
     market_key, universe_key = market_dashboard_cache_key(stocks, broad_stocks)
-    with _CACHE_LOCK:
-        has_cached_market = market_key in _CACHE
-    market, market_stale = get_cached_swr(
-        market_key,
-        MARKET_CACHE_TTL,
-        lambda: load_market_dashboard(
-            stocks,
-            broad_stocks,
-            allow_impact_fallback=not has_cached_market,
-        ),
-        cold_async=True,
-    )
+    if not is_nse_live_refresh_window():
+        market, market_stale = _cached_value_without_refresh(market_key)
+    else:
+        with _CACHE_LOCK:
+            has_cached_market = market_key in _CACHE
+        market, market_stale = get_cached_swr(
+            market_key,
+            MARKET_CACHE_TTL,
+            lambda: refresh_live_market_dashboard_cache(stocks, broad_stocks, market_key),
+            cold_async=True,
+        )
     market_refresh_error = None
-    if should_force_market_refresh(market, market_stale):
+    if is_nse_live_refresh_window() and should_force_market_refresh(market, market_stale):
         try:
             market = refresh_market_dashboard_cache()
             market_stale = False
@@ -4798,18 +4960,21 @@ def dashboard():
         fetch_headlines,
         cold_async=True,
     )
-    fii_dii, fii_dii_stale = get_cached_swr(
-        "fii_dii",
-        MARKET_CACHE_TTL,
-        fetch_fii_dii_activity,
-    )
+    if is_nse_live_refresh_window():
+        fii_dii, fii_dii_stale = get_cached_swr(
+            "fii_dii",
+            MARKET_CACHE_TTL,
+            fetch_fii_dii_activity,
+        )
+    else:
+        fii_dii, fii_dii_stale = _cached_value_without_refresh("fii_dii")
     calendar_entries, calendar_stale = get_cached_swr(
         f"company_calendar:{universe_key}",
         CALENDAR_CACHE_TTL,
         lambda: fetch_company_calendar(stocks),
         cold_async=True,
     )
-    headlines = headlines or []
+    headlines = [headline for headline in (headlines or []) if isinstance(headline, dict)]
     fii_dii = fii_dii or []
     calendar = build_calendar_panels(calendar_entries or [])
     earnings = enrich_earnings(calendar["earnings"], market["rows"])
@@ -4881,10 +5046,6 @@ def dashboard():
 @app.route("/insights")
 def insights():
     snapshot = _json_safe(get_cached_insights_snapshot())
-    if not snapshot:
-        ensure_insights_snapshot_refresh_async()
-    elif insights_snapshot_needs_nse_refresh(snapshot):
-        ensure_insights_snapshot_refresh_async()
     insight_data = (snapshot.get("insights") if snapshot else None) or empty_insights_data()
     market = {"hover_data": snapshot.get("hover_data", {}) if snapshot else {}}
     snapshot_status = snapshot.get("status", "ready") if snapshot else "warming"

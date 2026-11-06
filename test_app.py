@@ -51,6 +51,8 @@ from app import (
     normalize_fii_dii_history,
     parse_nse_index_card,
     refresh_daily_insights_snapshot,
+    is_nse_live_refresh_window,
+    seconds_until_next_ist_weekday_time,
     start_insights_snapshot_refresh_scheduler,
     seconds_until_next_ist_midnight,
 )
@@ -476,6 +478,17 @@ class DataModelTests(unittest.TestCase):
         seconds = seconds_until_next_ist_midnight(datetime(2026, 6, 21, 23, 59, 0, tzinfo=IST))
         self.assertEqual(seconds, 60)
 
+    def test_market_refresh_schedule_respects_nse_hours_and_weekends(self):
+        self.assertFalse(is_nse_live_refresh_window(datetime(2026, 6, 15, 9, 0, tzinfo=IST)))
+        self.assertTrue(is_nse_live_refresh_window(datetime(2026, 6, 15, 9, 15, tzinfo=IST)))
+        self.assertTrue(is_nse_live_refresh_window(datetime(2026, 6, 15, 15, 45, tzinfo=IST)))
+        self.assertFalse(is_nse_live_refresh_window(datetime(2026, 6, 15, 16, 0, tzinfo=IST)))
+        self.assertFalse(is_nse_live_refresh_window(datetime(2026, 6, 20, 11, 0, tzinfo=IST)))
+        seconds = seconds_until_next_ist_weekday_time(
+            18, 30, datetime(2026, 6, 19, 19, 0, tzinfo=IST)
+        )
+        self.assertEqual(seconds, 71 * 60 * 60 + 30 * 60)
+
     @patch("app.requests.Session")
     def test_nse_snapshot_fetch_uses_session_and_returns_rows(self, session_class):
         session = session_class.return_value.__enter__.return_value
@@ -601,7 +614,8 @@ class RouteTests(unittest.TestCase):
     @patch("app.get_nifty500_universe", return_value=([], False))
     @patch("app.get_stock_universe", return_value=([], False))
     @patch("app.get_cached_swr")
-    def test_dashboard_structure_and_search_routing(self, cached, universe, broad_universe):
+    @patch("app.is_nse_live_refresh_window", return_value=True)
+    def test_dashboard_structure_and_search_routing(self, live_window, cached, universe, broad_universe):
         cached.side_effect = [
             (SAMPLE_MARKET, False),
             ([], False),
@@ -709,7 +723,7 @@ class RouteTests(unittest.TestCase):
         html = self.client.get("/insights").get_data(as_text=True)
         self.assertIn("snapshot warming", html)
         self.assertIn("Preparing the latest Insights snapshot", html)
-        refresh_async.assert_called_once()
+        refresh_async.assert_not_called()
         market_loader.assert_not_called()
         insight_builder.assert_not_called()
 
@@ -719,7 +733,7 @@ class RouteTests(unittest.TestCase):
         snapshot.return_value = None
         warming = self.client.get("/api/insights-data").get_json()
         self.assertEqual(warming["status"], "warming")
-        refresh_async.assert_called_once()
+        refresh_async.assert_not_called()
         snapshot.return_value = {"status": "ready", "created_at": "now", "stale": True, "error": "old"}
         ready = self.client.get("/api/insights-data").get_json()
         self.assertEqual(ready["status"], "ready")
@@ -735,7 +749,7 @@ class RouteTests(unittest.TestCase):
         }
         ready = self.client.get("/api/insights-data").get_json()
         self.assertEqual(ready["status"], "ready")
-        refresh_async.assert_called_once()
+        refresh_async.assert_not_called()
 
     @patch("app.refresh_insights_snapshot")
     @patch("app.refresh_bulk_block_short_cache_from_nse")
@@ -751,7 +765,7 @@ class RouteTests(unittest.TestCase):
         import app as app_module
         app_module._INSIGHTS_SNAPSHOT_REFRESH_STARTED = False
         start_insights_snapshot_refresh_scheduler()
-        refresh_async.assert_called_once()
+        refresh_async.assert_not_called()
         app_module._INSIGHTS_SNAPSHOT_REFRESH_STARTED = False
 
     def test_local_seed_snapshot_needs_nse_refresh(self):
